@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Boids Lab — emergent flocking</title>
+<meta name="description" content="An interactive flocking simulation. Three simple rules, one emergent flock.">
+<meta property="og:title" content="Boids Lab — emergent flocking">
+<meta property="og:description" content="Three rules per bird. Nobody programs the flock. Drag the sliders and watch it change.">
+<style>
+:root{
+  --bg:#12100E; --panel:rgba(28,25,22,.82); --line:rgba(255,255,255,.13);
+  --fg:#EDE6DA; --dim:#9C9184; --accent:#E08A4C;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overscroll-behavior:none}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+#cv{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+
+#ui{
+  position:fixed; top:14px; left:14px; z-index:5;
+  width:270px; max-width:calc(100vw - 28px);
+  max-height:calc(100vh - 28px); max-height:calc(100dvh - 28px);
+  background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  display:flex; flex-direction:column; overflow:hidden;
+  transition:transform .22s ease, opacity .22s ease;
+}
+#ui.hid{transform:translateX(calc(-100% - 16px));opacity:0;pointer-events:none}
+#hd{display:flex;justify-content:flex-end;padding:6px 8px 0;flex:0 0 auto}
+#hd h1,#hd span{display:none}
+#bd{padding:11px 13px 13px;overflow-y:auto;flex:1 1 auto;-webkit-overflow-scrolling:touch}
+
+.row{margin-bottom:11px}
+.lbl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:4px;letter-spacing:.2px}
+.lbl b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;display:block;cursor:pointer
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);margin-top:-6px;border:none}
+input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--accent);border:none}
+input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
+
+.btns{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin:2px 0 12px}
+button{
+  font:inherit;font-size:11.5px;padding:5px 9px;border-radius:7px;cursor:pointer;
+  background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
+}
+button:hover{background:rgba(255,255,255,.11)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);border-color:var(--accent);color:#1A1207;font-weight:500}
+.sep{height:1px;background:var(--line);margin:12px 0 11px}
+.note{font-size:11px;color:var(--dim);line-height:1.5}
+.note b{color:var(--fg);font-weight:500}
+.stats{display:flex;gap:12px;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;margin-top:9px}
+.stats b{color:var(--fg);font-weight:500}
+.legend{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--dim);margin-top:9px}
+.legend #ramp{flex:1;height:6px;border-radius:3px}
+
+#tog{
+  position:fixed;top:14px;left:14px;z-index:6;width:36px;height:36px;padding:0;
+  border-radius:10px;display:none;align-items:center;justify-content:center;
+  background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);font-size:16px
+}
+#ui.hid + #tog{display:flex}
+#hd button{padding:2px 7px;font-size:14px;line-height:1;background:none;border:none;color:var(--dim)}
+#hd button:hover{color:var(--fg)}
+
+@media (max-width:640px){
+  #ui{top:auto;bottom:10px;left:10px;right:10px;width:auto;max-height:47vh;max-height:47dvh}
+  #ui.hid{transform:translateY(calc(100% + 16px))}
+  #tog{top:auto;bottom:10px;left:10px}
+}
+@media (prefers-reduced-motion:reduce){#ui{transition:none}}
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="ui">
+  <div id="hd">
+    <h1>Boids</h1>
+    <span id="sub">three rules</span>
+    <button id="hide" title="Close panel" aria-label="Close panel">×</button>
+  </div>
+  <div id="bd">
+
+    <div class="btns" id="presets">
+      <button data-p="flock" class="on">Flock</button>
+      <button data-p="swarm">Swarm</button>
+      <button data-p="school">School</button>
+      <button data-p="gnats">Gnats</button>
+      <button data-p="crystal">Crystal</button>
+    </div>
+
+    <div class="row"><div class="lbl"><span>Separation</span><b id="v-sep">1.6</b></div>
+      <input type="range" id="s-sep" min="0" max="3" step="0.05" value="1.6" aria-label="Separation"></div>
+    <div class="row"><div class="lbl"><span>Alignment</span><b id="v-ali">1.0</b></div>
+      <input type="range" id="s-ali" min="0" max="3" step="0.05" value="1.0" aria-label="Alignment"></div>
+    <div class="row"><div class="lbl"><span>Cohesion</span><b id="v-coh">0.9</b></div>
+      <input type="range" id="s-coh" min="0" max="3" step="0.05" value="0.9" aria-label="Cohesion"></div>
+    <div class="row"><div class="lbl"><span>Vision</span><b id="v-vis">52</b></div>
+      <input type="range" id="s-vis" min="14" max="130" step="1" value="52" aria-label="Vision radius"></div>
+    <div class="row"><div class="lbl"><span>Speed</span><b id="v-spd">2.6</b></div>
+      <input type="range" id="s-spd" min="0.4" max="7" step="0.05" value="2.6" aria-label="Speed"></div>
+    <div class="row"><div class="lbl"><span>Flock size</span><b id="v-cnt">500</b></div>
+      <input type="range" id="s-cnt" min="50" max="4000" step="50" value="500" aria-label="Flock size"></div>
+    <div class="row"><div class="lbl"><span>Trails</span><b id="v-fade">0.16</b></div>
+      <input type="range" id="s-fade" min="0.02" max="1" step="0.01" value="0.16" aria-label="Trail persistence"></div>
+
+    <div class="btns" style="margin-top:2px">
+      <button id="b-hash" class="on">Spatial hash: on</button>
+      <button id="b-scatter">Scatter</button>
+      <button id="b-link">Copy link</button>
+    </div>
+
+    <div class="stats">
+      <span>fps <b id="o-fps">—</b></span>
+      <span>step <b id="o-ms">—</b> ms</span>
+      <span>checks <b id="o-chk">—</b></span>
+    </div>
+
+    <div class="legend" title="Colour = neighbours currently seen. 7 is a real starling's neighbourhood (STARFLAG, 2008).">
+      <span>alone</span><div id="ramp"></div><span>7+ seen</span>
+    </div>
+
+    <div class="sep"></div>
+    <p class="note" style="margin:9px 0 0">Move your cursor over the field to scatter them. Turn <b>spatial hash</b> off to see what the naive algorithm costs. Colour is each bird's neighbour count — the ramp tops out at <b>7</b>, a real starling's neighbourhood.</p>
+  </div>
+</div>
+<button id="tog" title="Show controls" aria-label="Show controls">☰</button>
+
+<script>
+(function(){
+"use strict";
+
+var P = {sep:1.6, ali:1.0, coh:0.9, vis:52, spd:2.6, cnt:500, fade:0.16};
+var PRESETS = {
+  flock:  {sep:1.6, ali:1.0,  coh:0.9, vis:52,  spd:2.6, cnt:500,  fade:0.16},
+  swarm:  {sep:0.7, ali:0.35, coh:2.2, vis:78,  spd:2.0, cnt:900,  fade:0.10},
+  school: {sep:2.1, ali:2.4,  coh:1.1, vis:44,  spd:4.3, cnt:700,  fade:0.30},
+  gnats:  {sep:2.6, ali:0.0,  coh:0.5, vis:30,  spd:1.5, cnt:400,  fade:0.45},
+  crystal:{sep:3.0, ali:2.9,  coh:0.15,vis:26,  spd:0.9, cnt:1400, fade:0.06}
+};
+
+// ---- colour ------------------------------------------------------------
+// Each bird is coloured by how many neighbours it currently sees.
+// CROWD is the count where the ramp saturates. 7 is not arbitrary: real
+// starlings attend to their 6-7 nearest neighbours (Ballerini et al.,
+// PNAS 2008 - the STARFLAG project). A fully hot bird is seeing a real
+// starling's neighbourhood.
+var CROWD = 7;
+// Edit these stops to retune the ramp (alone -> crowded). Any number of
+// stops works; they are blended evenly across the range.
+var STOPS = ['#3D63D8', '#2FB6A8', '#EFC94C', '#FF5C38'];
+var LUT = buildLUT(STOPS, 64);
+function buildLUT(stops, n){
+  var out = new Array(n), segs = stops.length - 1;
+  function hex(c){ return [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)]; }
+  for (var i = 0; i < n; i++){
+    var t = i / (n - 1) * segs, sg = Math.min(segs - 1, t | 0), f = t - sg;
+    var a = hex(stops[sg]), b = hex(stops[sg + 1]);
+    out[i] = 'rgb(' + (a[0] + (b[0]-a[0]) * f | 0) + ',' + (a[1] + (b[1]-a[1]) * f | 0) + ',' + (a[2] + (b[2]-a[2]) * f | 0) + ')';
+  }
+  return out;
+}
+document.getElementById('ramp').style.background = 'linear-gradient(90deg,' + STOPS.join(',') + ')';
+
+var cv = document.getElementById('cv'), ctx = cv.getContext('2d', {alpha:false});
+var W = 0, H = 0, DPR = 1;
+var FW = 0, FH = 0, FX = 0, FY = 0;   // simulation field (fills the canvas)
+var px, py, vx, vy, nb, N = 0;
+var useHash = true, mx = -1e5, my = -1e5, checks = 0;
+var seed = 88172645463325252;
+
+function rnd(){ seed ^= seed << 13; seed ^= seed >>> 7; seed ^= seed << 17; return ((seed >>> 8) & 0xFFFFFF) / 0x1000000; }
+
+function computeField(){
+  FW = W; FH = H; FX = 0; FY = 0;
+}
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = cv.clientWidth; H = cv.clientHeight;
+  computeField();
+  cv.width = Math.max(1, Math.round(W * DPR));
+  cv.height = Math.max(1, Math.round(H * DPR));
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#12100E'; ctx.fillRect(0, 0, W, H);
+}
+
+function init(n){
+  N = n;
+  px = new Float32Array(n); py = new Float32Array(n);
+  vx = new Float32Array(n); vy = new Float32Array(n); nb = new Float32Array(n);
+  for (var i = 0; i < n; i++){
+    px[i] = rnd() * FW; py[i] = rnd() * FH;
+    var a = rnd() * 6.2831853;
+    vx[i] = Math.cos(a) * P.spd; vy[i] = Math.sin(a) * P.spd;
+  }
+}
+
+// ---- spatial hash ------------------------------------------------------
+// Bin boids into cells of side = vision radius, so each bird only tests the
+// 3x3 block of cells around it instead of the entire flock. Cell indices wrap
+// to match the toroidal field. Falls back to brute force when the grid is too
+// small to wrap without visiting a cell twice.
+var gCols = 0, gRows = 0, gCell = 0, gHead = null, gNext = null;
+
+function rebuildGrid(vis){
+  gCell = Math.max(vis, 1);
+  gCols = Math.max(1, Math.floor(FW / gCell));
+  gRows = Math.max(1, Math.floor(FH / gCell));
+  var nc = gCols * gRows;
+  if (!gHead || gHead.length !== nc) gHead = new Int32Array(nc);
+  if (!gNext || gNext.length !== N) gNext = new Int32Array(N);
+  gHead.fill(-1);
+  var cw = FW / gCols, ch = FH / gRows;
+  for (var i = 0; i < N; i++){
+    var cx = px[i] / cw | 0; if (cx < 0) cx = 0; else if (cx >= gCols) cx = gCols - 1;
+    var cy = py[i] / ch | 0; if (cy < 0) cy = 0; else if (cy >= gRows) cy = gRows - 1;
+    var c = cy * gCols + cx;
+    gNext[i] = gHead[c]; gHead[c] = i;
+  }
+}
+
+function step(){
+  var vis = P.vis, vis2 = vis * vis, sr = vis * 0.42, sep2 = sr * sr;
+  var hw = FW * 0.5, hh = FH * 0.5;
+  var hashOK = useHash && gColsOK(vis);
+  checks = 0;
+  if (hashOK) rebuildGrid(vis);
+  var cw = FW / gCols, ch = FH / gRows;
+
+  for (var i = 0; i < N; i++){
+    var bx = px[i], by = py[i];
+    var ax = 0, ay = 0, cxs = 0, cys = 0, sx = 0, sy = 0, n = 0;
+
+    if (hashOK){
+      var ci = bx / cw | 0; if (ci < 0) ci = 0; else if (ci >= gCols) ci = gCols - 1;
+      var cj = by / ch | 0; if (cj < 0) cj = 0; else if (cj >= gRows) cj = gRows - 1;
+      for (var oy = -1; oy <= 1; oy++){
+        var yy = (cj + oy + gRows) % gRows;
+        for (var ox = -1; ox <= 1; ox++){
+          var xx = (ci + ox + gCols) % gCols;
+          for (var j = gHead[yy * gCols + xx]; j !== -1; j = gNext[j]){
+            if (j === i) continue;
+            checks++;
+            var dx = px[j] - bx, dy = py[j] - by;
+            if (dx > hw) dx -= FW; else if (dx < -hw) dx += FW;
+            if (dy > hh) dy -= FH; else if (dy < -hh) dy += FH;
+            var d2 = dx * dx + dy * dy;
+            if (d2 > vis2 || d2 === 0) continue;
+            n++; ax += vx[j]; ay += vy[j]; cxs += dx; cys += dy;
+            if (d2 < sep2){ var iv = 1 / d2; sx -= dx * iv; sy -= dy * iv; }
+          }
+        }
+      }
+    } else {
+      for (var k = 0; k < N; k++){
+        if (k === i) continue;
+        checks++;
+        var dx2 = px[k] - bx, dy2 = py[k] - by;
+        if (dx2 > hw) dx2 -= FW; else if (dx2 < -hw) dx2 += FW;
+        if (dy2 > hh) dy2 -= FH; else if (dy2 < -hh) dy2 += FH;
+        var dd = dx2 * dx2 + dy2 * dy2;
+        if (dd > vis2 || dd === 0) continue;
+        n++; ax += vx[k]; ay += vy[k]; cxs += dx2; cys += dy2;
+        if (dd < sep2){ var iv2 = 1 / dd; sx -= dx2 * iv2; sy -= dy2 * iv2; }
+      }
+    }
+
+    nb[i] = n;
+    var nvx = vx[i], nvy = vy[i];
+    if (n > 0){
+      var inv = 1 / n;
+      nvx += (ax * inv - nvx) * 0.05 * P.ali + cxs * inv * 0.0016 * P.coh + sx * 22 * P.sep;
+      nvy += (ay * inv - nvy) * 0.05 * P.ali + cys * inv * 0.0016 * P.coh + sy * 22 * P.sep;
+    }
+    var pdx = bx - (mx - FX), pdy = by - (my - FY), pd2 = pdx * pdx + pdy * pdy;
+    if (pd2 < 14400 && pd2 > 0){ var pf = 95 / Math.sqrt(pd2); nvx += pdx * pf * 0.022; nvy += pdy * pf * 0.022; }
+
+    var sp = Math.sqrt(nvx * nvx + nvy * nvy); if (sp < 1e-6) sp = 1e-6;
+    var kk = P.spd / sp; nvx *= kk; nvy *= kk;
+    var nx = bx + nvx, ny = by + nvy;
+    if (nx < 0) nx += FW; else if (nx >= FW) nx -= FW;
+    if (ny < 0) ny += FH; else if (ny >= FH) ny -= FH;
+    vx[i] = nvx; vy[i] = nvy; px[i] = nx; py[i] = ny;
+  }
+}
+
+function gColsOK(vis){
+  var c = Math.max(1, Math.floor(FW / Math.max(vis, 1)));
+  var r = Math.max(1, Math.floor(FH / Math.max(vis, 1)));
+  return c >= 3 && r >= 3;
+}
+
+function draw(){
+  ctx.globalAlpha = P.fade;
+  ctx.fillStyle = '#12100E';
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+  for (var i = 0; i < N; i++){
+    var sp = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]) || 1e-6;
+    var ux = vx[i] / sp, uy = vy[i] / sp;
+    var m = nb[i] / CROWD; if (m > 1) m = 1;
+    ctx.fillStyle = LUT[(m * (LUT.length - 1)) | 0];
+    var x = px[i] + FX, y = py[i] + FY;
+    ctx.beginPath();
+    ctx.moveTo(x + ux * 5.4, y + uy * 5.4);
+    ctx.lineTo(x - ux * 3.6 + uy * 2.3, y - uy * 3.6 - ux * 2.3);
+    ctx.lineTo(x - ux * 3.6 - uy * 2.3, y - uy * 3.6 + ux * 2.3);
+    ctx.closePath(); ctx.fill();
+  }
+  if (mx > -1e4){
+    ctx.strokeStyle = 'rgba(224,138,76,.20)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(mx, my, 120, 0, 6.2831853); ctx.stroke();
+  }
+}
+
+// ---- loop --------------------------------------------------------------
+var last = performance.now(), acc = 0, fr = 0, msAcc = 0;
+function loop(t){
+  var dt = t - last; last = t; acc += dt; fr++;
+  var t0 = performance.now();
+  step();
+  msAcc += performance.now() - t0;
+  draw();
+  if (acc > 500){
+    document.getElementById('o-fps').textContent = Math.round(1000 / (acc / fr));
+    document.getElementById('o-ms').textContent = (msAcc / fr).toFixed(2);
+    document.getElementById('o-chk').textContent = fmt(checks);
+    acc = 0; fr = 0; msAcc = 0;
+  }
+  requestAnimationFrame(loop);
+}
+function fmt(v){ return v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(v); }
+
+// ---- controls ----------------------------------------------------------
+var SL = [['sep','s-sep','v-sep',2],['ali','s-ali','v-ali',2],['coh','s-coh','v-coh',2],
+          ['vis','s-vis','v-vis',0],['spd','s-spd','v-spd',2],['cnt','s-cnt','v-cnt',0],
+          ['fade','s-fade','v-fade',2]];
+
+function syncUI(){
+  for (var i = 0; i < SL.length; i++){
+    var k = SL[i][0];
+    document.getElementById(SL[i][1]).value = P[k];
+    document.getElementById(SL[i][2]).textContent = SL[i][3] ? P[k].toFixed(SL[i][3] === 2 ? (P[k] % 1 ? 2 : 1) : SL[i][3]) : Math.round(P[k]);
+  }
+}
+SL.forEach(function(s){
+  document.getElementById(s[1]).addEventListener('input', function(){
+    P[s[0]] = parseFloat(this.value);
+    document.getElementById(s[2]).textContent = s[3] ? P[s[0]].toFixed(P[s[0]] % 1 ? 2 : 1) : Math.round(P[s[0]]);
+    if (s[0] === 'cnt') init(Math.round(P.cnt));
+    markCustom();
+  });
+});
+
+function applyPreset(name){
+  var p = PRESETS[name]; if (!p) return;
+  for (var k in p) P[k] = p[k];
+  syncUI(); init(Math.round(P.cnt));
+  [].forEach.call(document.querySelectorAll('#presets button'), function(b){
+    b.classList.toggle('on', b.dataset.p === name);
+  });
+  document.getElementById('sub').textContent = name;
+}
+[].forEach.call(document.querySelectorAll('#presets button'), function(b){
+  b.addEventListener('click', function(){ applyPreset(b.dataset.p); });
+});
+function markCustom(){
+  [].forEach.call(document.querySelectorAll('#presets button'), function(b){ b.classList.remove('on'); });
+  document.getElementById('sub').textContent = 'custom';
+}
+
+document.getElementById('b-hash').addEventListener('click', function(){
+  useHash = !useHash;
+  this.classList.toggle('on', useHash);
+  this.textContent = 'Spatial hash: ' + (useHash ? 'on' : 'off');
+});
+document.getElementById('b-scatter').addEventListener('click', function(){ init(Math.round(P.cnt)); });
+document.getElementById('b-link').addEventListener('click', function(){
+  var q = SL.map(function(s){ return s[0] + '=' + P[s[0]]; }).join('&');
+  var url = location.origin + location.pathname + '#' + q;
+  var btn = this;
+  var done = function(){ btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy link'; }, 1400); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function(){ prompt('Copy this link:', url); });
+  else prompt('Copy this link:', url);
+  history.replaceState(null, '', '#' + q);
+});
+
+document.getElementById('hide').addEventListener('click', function(){ document.getElementById('ui').classList.add('hid'); });
+document.getElementById('tog').addEventListener('click', function(){ document.getElementById('ui').classList.remove('hid'); });
+
+cv.addEventListener('pointermove', function(e){ mx = e.clientX; my = e.clientY; });
+cv.addEventListener('pointerdown', function(e){ mx = e.clientX; my = e.clientY; });
+cv.addEventListener('pointerleave', function(){ mx = -1e5; my = -1e5; });
+cv.addEventListener('pointerup', function(){ mx = -1e5; my = -1e5; });
+
+function readHash(){
+  if (!location.hash || location.hash.length < 3) return false;
+  var ok = false;
+  location.hash.slice(1).split('&').forEach(function(kv){
+    var a = kv.split('='); if (a.length !== 2) return;
+    var el = document.getElementById('s-' + a[0]); if (!el) return;
+    var v = parseFloat(a[1]); if (isNaN(v)) return;
+    v = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), v));
+    P[a[0]] = v; ok = true;
+  });
+  return ok;
+}
+
+var rt;
+window.addEventListener('resize', function(){
+  clearTimeout(rt);
+  rt = setTimeout(function(){ resize(); init(Math.round(P.cnt)); }, 140);
+});
+
+
+resize();
+if (readHash()){ syncUI(); markCustom(); } else { syncUI(); }
+if (W < 640) { P.cnt = Math.min(P.cnt, 700); syncUI(); }
+init(Math.round(P.cnt));
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
