@@ -19,12 +19,19 @@ body{background:var(--bg);color:var(--fg);overflow:hidden;
   pointer-events:none;user-select:none;
 }
 #status.run{display:none}
+#room{
+  position:fixed;left:12px;bottom:10px;z-index:5;color:var(--dim);
+  font-size:11px;letter-spacing:.3px;
+  background:rgba(28,25,22,.6);padding:3px 9px;border-radius:8px;
+  pointer-events:none;user-select:none;display:none;
+}
 </style>
 </head>
 <body>
 
 <canvas id="cv"></canvas>
 <div id="status">paused · frame 0</div>
+<div id="room"></div>
 
 <script>
 (function(){
@@ -604,12 +611,54 @@ function setStops(arr){
   return true;
 }
 
-// ---- protocol -------------------------------------------------------------
-var chan = ('BroadcastChannel' in window) ? new BroadcastChannel('boids-lab') : null;
+// ---- transports -----------------------------------------------------------
+// Messages are transport-agnostic; the model serves every transport at once.
+// BroadcastChannel reaches remotes in this browser; a WebSocket room
+// (?room=CODE, relayed by relay.js) reaches tablets and phones on the LAN.
+var transports = [];
+
+if ('BroadcastChannel' in window){
+  var chan = new BroadcastChannel('boids-lab');
+  chan.onmessage = function(e){ dispatch(e.data); };
+  transports.push(function(m){ chan.postMessage(m); });
+}
+
+var roomMatch = /[?&]room(?:=([\w-]*))?(?:&|$)/.exec(location.search);
+var room = null;
+if (roomMatch){
+  room = roomMatch[1];
+  if (!room){
+    room = '';
+    var RA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    for (var ri = 0; ri < 4; ri++) room += RA[Math.random() * RA.length | 0];
+  }
+  (function(){
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') +
+              location.host + '/ws/' + room;
+    var ws = null;
+    function openWS(){
+      ws = new WebSocket(url);
+      ws.onmessage = function(e){
+        try { dispatch(JSON.parse(e.data)); } catch (err) {}
+      };
+      ws.onopen = function(){ send(describeMsg()); };   // announce to the room
+      ws.onclose = function(){ ws = null; setTimeout(openWS, 1500); };
+      ws.onerror = function(){};
+    }
+    transports.push(function(m){
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+    });
+    openWS();
+  })();
+  var roomEl = document.getElementById('room');
+  roomEl.style.display = 'block';
+  roomEl.textContent = 'room ' + room + ' · tablet: ' + location.origin +
+    location.pathname.replace(/[^\/]*$/, 'tablet.html') + '?room=' + room;
+}
+
 function send(m){
-  if (!chan) return;
   m.proto = PROTO; m.from = 'model';
-  chan.postMessage(m);
+  for (var ti = 0; ti < transports.length; ti++) transports[ti](m);
 }
 
 function currentValues(){
@@ -725,9 +774,7 @@ function applyScrub(f){
   else send({t:'err', of:'scrub', msg:'frame not in buffer'});
 }
 
-if (chan){
-  chan.onmessage = function(e){
-    var m = e.data;
+function dispatch(m){
     if (!m || m.from === 'model') return;
     if (m.t === 'hello') send(describeMsg());
     else if (m.t === 'describe') send(describeMsg());
@@ -746,7 +793,9 @@ if (chan){
       if (tree) send({t:'runFile', file:buildRunFile()});
     }
     else if (m.t === 'load') applyLoad(m.file);
-  };
+}
+
+if (transports.length){
   setInterval(function(){
     var o = orderParams();
     send({t:'telemetry', frame:viewFrame, running:running, fps:running?fps:0,

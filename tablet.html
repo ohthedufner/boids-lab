@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Boids Instrument — tablet</title>
+<meta name="description" content="The tablet surface of the boids instrument: numeric entry, setup vs live, capture, branching, run files, ensembles.">
+<style>
+:root{
+  --bg:#12100E; --panel:rgba(28,25,22,.82); --line:rgba(255,255,255,.13);
+  --fg:#EDE6DA; --dim:#9C9184; --accent:#E08A4C;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; padding:16px 14px 40px;
+}
+header{max-width:1280px;margin:0 auto 14px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+h1{font-size:17px;font-weight:600;margin:0}
+.sub{font-size:12px;color:var(--dim)}
+#conn{display:inline-block;width:9px;height:9px;border-radius:50%;background:#B3442E;margin-right:7px;vertical-align:0}
+#conn.ok{background:#4CAF7D}
+#bigframe{margin-left:auto;font-size:15px;font-variant-numeric:tabular-nums;color:var(--dim)}
+#bigframe b{color:var(--fg);font-weight:600}
+
+#cols{display:grid;grid-template-columns:repeat(3,minmax(300px,1fr));gap:14px;max-width:1280px;margin:0 auto}
+@media (max-width:1020px){#cols{grid-template-columns:repeat(2,minmax(280px,1fr))}}
+@media (max-width:660px){#cols{grid-template-columns:1fr}}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.card h2{font-size:11px;font-weight:500;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 0 11px}
+
+.prow{display:grid;grid-template-columns:1fr 92px;gap:6px 10px;align-items:center;margin-bottom:12px}
+.prow:last-child{margin-bottom:2px}
+.prow label{font-size:12px;color:var(--dim);letter-spacing:.2px}
+.prow input[type=range]{grid-column:1 / -1}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;margin:0;display:block;cursor:pointer
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:19px;height:19px;border-radius:50%;background:var(--accent);margin-top:-8px;border:none}
+input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:19px;height:19px;border-radius:50%;background:var(--accent);border:none}
+input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
+input[type=number],input[type=text]{
+  font:inherit;font-size:15px;width:100%;padding:6px 9px;border-radius:8px;
+  background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
+  font-variant-numeric:tabular-nums;
+}
+input[type=number]:focus-visible,input[type=text]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.btns{display:flex;flex-wrap:wrap;gap:7px}
+button{
+  font:inherit;font-size:13px;padding:9px 12px;border-radius:9px;cursor:pointer;
+  background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
+}
+button:hover{background:rgba(255,255,255,.11)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);border-color:var(--accent);color:#1A1207;font-weight:500}
+button.wide{flex:1}
+.stats{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.stats b{color:var(--fg);font-weight:500}
+.legend{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--dim);margin-top:10px}
+.legend #ramp{flex:1;height:6px;border-radius:3px}
+.note{font-size:11.5px;color:var(--dim);line-height:1.5;margin:10px 0 0}
+.note b{color:var(--fg);font-weight:500}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.field label{display:block;font-size:11px;color:var(--dim);margin-bottom:3px}
+
+/* Setup is a different surface on purpose: these fields define a START.
+   A numeric field on a live control looks like a field that will take you
+   back; setup fields and live fields must not look alike. */
+#setupCard{border-color:rgba(224,138,76,.5)}
+#setupCard h2{color:var(--accent)}
+#setupGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:11px}
+
+table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin-top:10px}
+th,td{text-align:right;padding:3px 6px;border-bottom:1px solid var(--line);color:var(--dim)}
+th{font-weight:500;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase}
+td:first-child,th:first-child{text-align:left}
+tr.sum td{color:var(--fg);border-bottom:none}
+#claims{display:flex;flex-direction:column;gap:5px;margin-top:9px;font-size:12px;color:var(--dim)}
+#claims button{text-align:left;padding:6px 10px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span id="conn"></span>Boids Instrument</h1>
+  <span class="sub" id="connText">looking for a model…</span>
+  <span id="bigframe">frame <b id="frame">—</b></span>
+</header>
+
+<div id="cols">
+
+  <div class="col">
+    <div class="card">
+      <h2>Live — behavioural</h2>
+      <div id="liveRows"></div>
+      <p class="note">Live changes are <b>irreversible</b>: putting a value back does not rewind anything — the flock is where it is. The only perfect return is Setup.</p>
+    </div>
+    <div class="card">
+      <h2>Live — display</h2>
+      <div id="dispRows"></div>
+      <div class="legend"><span>alone</span><div id="ramp"></div><span id="crowdCap">7+ seen</span></div>
+      <p class="note">Display values are the safe ones — the simulation never sees them. Retune them over a paused or scrubbed frame and put them back exactly.</p>
+    </div>
+    <div class="card">
+      <h2>Engine</h2>
+      <div class="btns">
+        <button id="b-hash" class="wide">Spatial hash: —</button>
+        <button id="b-pointer" class="wide">Pointer: —</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>Clock</h2>
+      <div class="btns" style="margin-bottom:11px">
+        <button id="b-go" class="wide">Go</button>
+        <button id="b-pause" class="wide">Pause</button>
+        <button id="b-back" class="wide">◀ Back</button>
+        <button id="b-step" class="wide">Step ▶</button>
+      </div>
+      <div class="prow"><label>Clock rate <b id="v-rate" style="color:var(--fg)">1</b></label><span></span>
+        <input type="range" id="s-rate" min="0.25" max="8" step="0.25" value="1" aria-label="Clock rate"></div>
+    </div>
+    <div class="card">
+      <h2>Capture</h2>
+      <div class="prow"><label>Scrub <b id="v-scrub" style="color:var(--fg)">—</b></label><span></span>
+        <input type="range" id="s-scrub" min="0" max="0" step="1" value="0" aria-label="Scrub captured frames"></div>
+      <div class="btns" style="margin-bottom:10px">
+        <button id="b-resume" class="wide">Resume from end</button>
+        <button id="b-branch" class="wide">Branch here</button>
+      </div>
+      <div class="grid2">
+        <input type="text" id="f-note" placeholder="claim note…" aria-label="Claim note">
+        <button id="b-claim">Mark claim</button>
+      </div>
+      <div id="claims"></div>
+      <p class="note">The buffer is always recording; <b>pause is the capture</b>. Scrub freely, then resume the timeline — or branch and try a different future.</p>
+    </div>
+    <div class="card">
+      <h2>Readouts</h2>
+      <div class="stats">
+        <span>fps <b id="o-fps">—</b></span>
+        <span>step <b id="o-ms">—</b> ms</span>
+        <span>checks <b id="o-chk">—</b></span>
+        <span>mean nb <b id="o-nb">—</b></span>
+        <span>polarization <b id="o-pol">—</b></span>
+        <span>rotation <b id="o-rot">—</b></span>
+      </div>
+      <p class="note">polarization ≈ 1: travelling as one flock. rotation high: milling. Both near 0: a swarm.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card" id="setupCard">
+      <h2>Setup — a new start</h2>
+      <div class="btns" style="margin-bottom:11px" id="presets"></div>
+      <div id="setupGrid"></div>
+      <div class="btns">
+        <button id="b-fill" class="wide">Load current</button>
+        <button id="b-apply" class="wide">Apply (paused)</button>
+        <button id="b-applyrun" class="wide">Apply &amp; run</button>
+      </div>
+      <p class="note">Presets fill this form; nothing happens until Apply. Setup is the <b>only reproducible moment</b>: same numbers, same flock, every time.</p>
+    </div>
+    <div class="card">
+      <h2>Run file</h2>
+      <div class="btns" style="margin-bottom:10px">
+        <button id="b-export" class="wide">Export</button>
+        <button id="b-loadbtn" class="wide">Load…</button>
+      </div>
+      <input type="file" id="f-load" accept=".json,application/json" style="display:none">
+      <div class="grid2">
+        <div class="field"><label for="f-goto">Go to frame</label><input type="number" id="f-goto" min="0" step="1" value="0"></div>
+        <div class="field"><label>&nbsp;</label><button id="b-goto" class="wide" style="width:100%">Go to</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Ensemble</h2>
+      <div class="grid2" style="margin-bottom:10px">
+        <div class="field"><label for="f-eruns">Runs</label><input type="number" id="f-eruns" min="2" max="20" step="1" value="5"></div>
+        <div class="field"><label for="f-eframes">Frames each</label><input type="number" id="f-eframes" min="50" max="20000" step="50" value="600"></div>
+      </div>
+      <div class="btns"><button id="b-ensemble" class="wide">Run ensemble</button></div>
+      <div id="eresults"></div>
+      <p class="note">Same setup numbers, different seeds — what the rules do <b>in general</b>, not what one flock happened to do. Replaces the current run.</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var PROTO = 1;
+
+// ---- transports (BroadcastChannel and/or ?room=CODE WebSocket) ------------
+var transports = [];
+if ('BroadcastChannel' in window){
+  var chan = new BroadcastChannel('boids-lab');
+  chan.onmessage = function(e){ dispatch(e.data); };
+  transports.push(function(m){ chan.postMessage(m); });
+}
+var roomMatch = /[?&]room=([\w-]+)/.exec(location.search);
+if (roomMatch){
+  (function(){
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') +
+              location.host + '/ws/' + roomMatch[1];
+    var ws = null;
+    function openWS(){
+      ws = new WebSocket(url);
+      ws.onmessage = function(e){ try { dispatch(JSON.parse(e.data)); } catch (err) {} };
+      ws.onopen = function(){ send({t:'hello'}); };
+      ws.onclose = function(){ ws = null; setTimeout(openWS, 1500); };
+      ws.onerror = function(){};
+    }
+    transports.push(function(m){
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+    });
+    openWS();
+  })();
+}
+if (!transports.length){
+  document.getElementById('connText').textContent = 'no transport: browser lacks BroadcastChannel and no ?room= given';
+  return;
+}
+function send(m){
+  m.proto = PROTO; m.from = 'remote';
+  for (var ti = 0; ti < transports.length; ti++) transports[ti](m);
+}
+
+// ---- state ----------------------------------------------------------------
+var spec = null, values = null, presets = null, running = false;
+var head = 0, view = 0, first = 0;
+var hooks = new Set();          // one-shot message waiters (ensemble)
+var $ = function(id){ return document.getElementById(id); };
+
+var LIVE = ['sep','ali','coh','vis','spd'];
+var DISP = ['fade','crowd'];
+var SETUP_KEYS = ['seed','cnt','aspect','sep','ali','coh','vis','spd','fade','crowd'];
+var setupTouched = false;
+
+function fmt(k, v){
+  var s = spec && spec[k];
+  return s && s.integer ? String(Math.round(v)) : (+v).toFixed(v % 1 ? 2 : 1);
+}
+function clampTo(k, v){
+  var s = spec[k];
+  v = parseFloat(v);
+  if (isNaN(v)) return null;
+  if (v < s.min) v = s.min; else if (v > s.max) v = s.max;
+  return s.integer ? Math.round(v) : v;
+}
+
+// ---- dynamic rows ---------------------------------------------------------
+// slider + numeric entry per parameter; ranges come from the model's spec
+function buildRows(host, keys){
+  host.innerHTML = '';
+  keys.forEach(function(k){
+    var s = spec[k];
+    var row = document.createElement('div'); row.className = 'prow';
+    row.innerHTML =
+      '<label for="n-' + k + '">' + s.label + '</label>' +
+      '<input type="number" id="n-' + k + '" min="' + s.min + '" max="' + s.max + '" step="' + s.step + '" aria-label="' + s.label + '">' +
+      '<input type="range" id="s-' + k + '" min="' + s.min + '" max="' + s.max + '" step="' + s.step + '" aria-label="' + s.label + ' slider">';
+    host.appendChild(row);
+    var num = row.querySelector('input[type=number]');
+    var sld = row.querySelector('input[type=range]');
+    num.value = fmt(k, values[k]); sld.value = values[k];
+    sld.addEventListener('input', function(){
+      var v = parseFloat(this.value);
+      num.value = fmt(k, v);
+      send({t:'set', key:k, value:v});
+    });
+    num.addEventListener('change', function(){
+      var v = clampTo(k, this.value);
+      if (v === null){ this.value = fmt(k, values[k]); return; }
+      this.value = fmt(k, v); sld.value = v;
+      send({t:'set', key:k, value:v});
+    });
+  });
+}
+
+function buildSetupForm(){
+  var host = $('setupGrid'); host.innerHTML = '';
+  SETUP_KEYS.forEach(function(k){
+    var s = spec[k];
+    var f = document.createElement('div'); f.className = 'field';
+    f.innerHTML = '<label for="su-' + k + '">' + s.label + '</label>' +
+      '<input type="number" id="su-' + k + '" min="' + s.min + '" max="' + s.max + '" step="' + s.step + '">';
+    host.appendChild(f);
+    var inp = f.querySelector('input');
+    inp.value = s.integer ? Math.round(values[k]) : +(+values[k]).toFixed(4);
+    inp.addEventListener('change', function(){ setupTouched = true; });
+  });
+}
+function fillSetupForm(src){
+  SETUP_KEYS.forEach(function(k){
+    var inp = $('su-' + k);
+    if (inp && k in src) inp.value = spec[k].integer ? Math.round(src[k]) : +(+src[k]).toFixed(4);
+  });
+}
+function collectSetupForm(){
+  var p = {};
+  SETUP_KEYS.forEach(function(k){
+    var v = clampTo(k, $('su-' + k).value);
+    if (v !== null) p[k] = v;
+  });
+  return p;
+}
+
+function buildPresets(){
+  var host = $('presets'); host.innerHTML = '';
+  Object.keys(presets).forEach(function(name){
+    var b = document.createElement('button');
+    b.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+    b.addEventListener('click', function(){ fillSetupForm(presets[name]); setupTouched = true; });
+    host.appendChild(b);
+  });
+}
+
+// ---- reflecting model truth ----------------------------------------------
+function reflect(k, v){
+  if (values) values[k] = v;
+  var sld = $('s-' + k), num = $('n-' + k);
+  if (sld && document.activeElement !== sld) sld.value = v;
+  if (num && document.activeElement !== num) num.value = fmt(k, v);
+  if (k === 'hash') paintToggle('b-hash', 'Spatial hash', v);
+  if (k === 'pointer') paintToggle('b-pointer', 'Pointer', v);
+  if (k === 'crowd') $('crowdCap').textContent = Math.round(v) + '+ seen';
+  if (k === 'stops') $('ramp').style.background = 'linear-gradient(90deg,' + v.join(',') + ')';
+  if (k === 'rate'){ if (document.activeElement !== $('s-rate')) $('s-rate').value = v; $('v-rate').textContent = v; }
+}
+function paintToggle(id, label, v){
+  var b = $(id);
+  b.textContent = label + ': ' + (v ? 'on' : 'off');
+  b.classList.toggle('on', !!v);
+}
+function reflectClock(c){
+  running = c.running;
+  head = c.frame;
+  view = ('viewFrame' in c) ? c.viewFrame : c.frame;
+  first = ('bufFirst' in c) ? c.bufFirst : 0;
+  $('b-go').classList.toggle('on', running);
+  $('b-pause').classList.toggle('on', !running);
+  $('frame').textContent = view < head ? view + ' / ' + head : head;
+  var s = $('s-scrub');
+  if (document.activeElement !== s){ s.min = first; s.max = head; s.value = view; }
+  $('v-scrub').textContent = (head > first ? 'f' + first + '–' + head : '—') +
+                             (c.replaying ? ' · replaying' : '');
+  if ('rate' in c) reflect('rate', c.rate);
+}
+function reflectTree(t){
+  var host = $('claims'); host.innerHTML = '';
+  if (!t) return;
+  var info = document.createElement('div');
+  info.textContent = 'branches: ' + t.nodes.length + ' · active #' + t.active +
+                     (t.tainted ? ' · ⚠ pointer used — not replayable' : '');
+  host.appendChild(info);
+  (t.claims || []).forEach(function(c){
+    var b = document.createElement('button');
+    b.textContent = '→ f' + c.from + (c.note ? ' — ' + c.note : '');
+    b.addEventListener('click', function(){ send({t:'do', cmd:'goto', frame:c.from}); });
+    host.appendChild(b);
+  });
+}
+function reflectAll(msg){
+  spec = msg.spec; values = msg.values; presets = msg.presets;
+  buildRows($('liveRows'), LIVE);
+  buildRows($('dispRows'), DISP);
+  buildPresets();
+  if (!setupTouched) buildSetupForm();
+  ['hash','pointer','crowd','stops','rate'].forEach(function(k){ reflect(k, values[k]); });
+  reflectClock(msg.clock);
+  if ('tree' in msg) reflectTree(msg.tree);
+  isConnected = true;
+  $('conn').classList.add('ok');
+  $('connText').textContent = 'model v' + msg.version.model + ' · protocol v' + msg.version.proto +
+    (roomMatch ? ' · room ' + roomMatch[1] : '');
+}
+
+var isConnected = false;
+function dispatch(m){
+  if (!m || m.from !== 'model') return;
+  hooks.forEach(function(h){ h(m); });
+  if (m.t === 'describe') reflectAll(m);
+  else if (m.t === 'state') reflect(m.key, m.value);
+  else if (m.t === 'clock') reflectClock(m);
+  else if (m.t === 'setupDone'){
+    values = m.values;
+    ['sep','ali','coh','vis','spd','fade','crowd','stops','hash','pointer','rate'].forEach(function(k){ reflect(k, values[k]); });
+    reflectClock(m.clock);
+  }
+  else if (m.t === 'tree') reflectTree(m.tree);
+  else if (m.t === 'telemetry'){
+    if (m.running) $('frame').textContent = m.frame;
+    $('o-fps').textContent = m.running ? m.fps : '—';
+    $('o-ms').textContent = m.stepMs;
+    $('o-chk').textContent = m.checks >= 1e6 ? (m.checks/1e6).toFixed(1)+'M'
+                          : m.checks >= 1e3 ? (m.checks/1e3).toFixed(0)+'k' : m.checks;
+    $('o-nb').textContent = m.meanNb;
+    $('o-pol').textContent = m.pol;
+    $('o-rot').textContent = m.rot;
+  }
+  else if (m.t === 'runFile'){
+    var blob = new Blob([JSON.stringify(m.file)], {type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'boids-run-s' + (m.file.profile && m.file.profile.seed || 0) +
+                 '-n' + (m.file.state0 && m.file.state0.n || 0) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+  }
+  else if (m.t === 'err'){ $('connText').textContent = 'model: ' + m.msg; }
+}
+
+// ---- fixed controls -------------------------------------------------------
+$('b-go').addEventListener('click', function(){ send({t:'do', cmd:'go'}); });
+$('b-pause').addEventListener('click', function(){ send({t:'do', cmd:'pause'}); });
+$('b-back').addEventListener('click', function(){ send({t:'do', cmd:'back'}); });
+$('b-step').addEventListener('click', function(){
+  if (running) send({t:'do', cmd:'pause'});
+  else send({t:'do', cmd:'step'});
+});
+$('s-rate').addEventListener('input', function(){
+  var v = parseFloat(this.value);
+  $('v-rate').textContent = v;
+  send({t:'set', key:'rate', value:v});
+});
+$('s-scrub').addEventListener('input', function(){
+  send({t:'scrub', frame:parseInt(this.value, 10)});
+});
+$('b-resume').addEventListener('click', function(){ send({t:'do', cmd:'resumeEnd'}); });
+$('b-branch').addEventListener('click', function(){ send({t:'do', cmd:'branchHere'}); });
+$('b-claim').addEventListener('click', function(){
+  send({t:'claim', from:view, to:view, note:$('f-note').value});
+  $('f-note').value = '';
+});
+$('b-hash').addEventListener('click', function(){
+  send({t:'set', key:'hash', value:values && values.hash ? 0 : 1});
+});
+$('b-pointer').addEventListener('click', function(){
+  send({t:'set', key:'pointer', value:values && values.pointer ? 0 : 1});
+});
+$('b-fill').addEventListener('click', function(){
+  if (values){ fillSetupForm(values); setupTouched = true; }
+});
+$('b-apply').addEventListener('click', function(){
+  var p = collectSetupForm(); p.run = false;
+  send({t:'setup', profile:p});
+});
+$('b-applyrun').addEventListener('click', function(){
+  var p = collectSetupForm(); p.run = true;
+  send({t:'setup', profile:p});
+});
+$('b-export').addEventListener('click', function(){ send({t:'export'}); });
+$('b-loadbtn').addEventListener('click', function(){ $('f-load').click(); });
+$('f-load').addEventListener('change', function(){
+  var f = this.files && this.files[0];
+  this.value = '';
+  if (!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try { send({t:'load', file:JSON.parse(r.result)}); }
+    catch(e){ $('connText').textContent = 'not a valid run file'; }
+  };
+  r.readAsText(f);
+});
+$('b-goto').addEventListener('click', function(){
+  var v = parseInt($('f-goto').value, 10);
+  if (!isNaN(v)) send({t:'do', cmd:'goto', frame:v});
+});
+
+// ---- ensemble -------------------------------------------------------------
+// Same setup numbers, K different seeds, F frames each; read the order
+// parameters off every run. Instance vs ensemble: what the rules do in
+// general, not what one flock happened to do. Seeds derive deterministically
+// from the form seed, so an ensemble is itself reproducible.
+function waitMsg(pred, ms){
+  return new Promise(function(res, rej){
+    var h = function(m){ if (pred(m)){ hooks.delete(h); clearTimeout(to); res(m); } };
+    var to = setTimeout(function(){ hooks.delete(h); rej(new Error('timeout')); }, ms || 15000);
+    hooks.add(h);
+  });
+}
+var ensembleRunning = false;
+$('b-ensemble').addEventListener('click', function(){
+  if (ensembleRunning){ ensembleRunning = false; return; }
+  runEnsemble();
+});
+function runEnsemble(){
+  var K = Math.max(2, Math.min(20, parseInt($('f-eruns').value, 10) || 5));
+  var F = Math.max(50, Math.min(20000, parseInt($('f-eframes').value, 10) || 600));
+  var base = collectSetupForm();
+  var rows = [];
+  ensembleRunning = true;
+  $('b-ensemble').textContent = 'Stop';
+  var i = 0;
+  function next(){
+    if (!ensembleRunning || i >= K){ finish(); return; }
+    var seed = ((base.seed || 1) + i * 7919) % 2147483647 || 1;
+    var p = {}; for (var k in base) p[k] = base[k];
+    p.seed = seed; p.run = false;
+    send({t:'setup', profile:p});
+    waitMsg(function(m){ return m.t === 'setupDone'; }, 10000)
+      .then(function(){
+        send({t:'do', cmd:'goto', frame:F});
+        return waitMsg(function(m){ return m.t === 'clock' && m.viewFrame >= F && !m.replaying; }, 120000);
+      })
+      .then(function(){
+        return waitMsg(function(m){ return m.t === 'telemetry' && m.frame === F; }, 5000);
+      })
+      .then(function(tel){
+        rows.push({seed:seed, pol:tel.pol, rot:tel.rot, meanNb:tel.meanNb});
+        i++;
+        renderEnsemble(rows, i, K, F);
+        next();
+      })
+      .catch(function(e){
+        $('connText').textContent = 'ensemble: ' + e.message;
+        finish();
+      });
+  }
+  function finish(){
+    ensembleRunning = false;
+    $('b-ensemble').textContent = 'Run ensemble';
+  }
+  renderEnsemble(rows, 0, K, F);
+  next();
+}
+function renderEnsemble(rows, done, K, F){
+  var h = '<table><tr><th>seed</th><th>pol</th><th>rot</th><th>mean nb</th></tr>';
+  rows.forEach(function(r){
+    h += '<tr><td>' + r.seed + '</td><td>' + r.pol + '</td><td>' + r.rot + '</td><td>' + r.meanNb + '</td></tr>';
+  });
+  if (rows.length >= 2){
+    var mean = function(f){ return rows.reduce(function(a, r){ return a + f(r); }, 0) / rows.length; };
+    var sd = function(f, mu){ return Math.sqrt(rows.reduce(function(a, r){ return a + (f(r) - mu) * (f(r) - mu); }, 0) / rows.length); };
+    var mp = mean(function(r){ return r.pol; }), mr = mean(function(r){ return r.rot; });
+    h += '<tr class="sum"><td>μ ± σ</td><td>' + mp.toFixed(3) + '±' + sd(function(r){ return r.pol; }, mp).toFixed(3) +
+         '</td><td>' + mr.toFixed(3) + '±' + sd(function(r){ return r.rot; }, mr).toFixed(3) + '</td><td></td></tr>';
+  }
+  h += '</table>';
+  if (done < K) h += '<p class="note">run ' + done + ' / ' + K + ' · ' + F + ' frames each…</p>';
+  $('eresults').innerHTML = h;
+}
+
+// ---- find the model -------------------------------------------------------
+send({t:'hello'});
+setInterval(function(){ if (!isConnected) send({t:'hello'}); }, 1000);
+})();
+</script>
+</body>
+</html>

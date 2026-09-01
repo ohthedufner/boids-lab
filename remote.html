@@ -179,12 +179,42 @@ button.wide{flex:1}
 "use strict";
 
 var PROTO = 1;
-var chan = ('BroadcastChannel' in window) ? new BroadcastChannel('boids-lab') : null;
-if (!chan){
-  document.getElementById('connText').textContent = 'BroadcastChannel unsupported in this browser';
+
+// transports: BroadcastChannel for a model in this browser, or a WebSocket
+// room (?room=CODE via relay.js) for a model on another machine
+var transports = [];
+if ('BroadcastChannel' in window){
+  var chan = new BroadcastChannel('boids-lab');
+  chan.onmessage = function(e){ dispatch(e.data); };
+  transports.push(function(m){ chan.postMessage(m); });
+}
+var roomMatch = /[?&]room=([\w-]+)/.exec(location.search);
+if (roomMatch){
+  (function(){
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') +
+              location.host + '/ws/' + roomMatch[1];
+    var ws = null;
+    function openWS(){
+      ws = new WebSocket(url);
+      ws.onmessage = function(e){ try { dispatch(JSON.parse(e.data)); } catch (err) {} };
+      ws.onopen = function(){ send({t:'hello'}); };
+      ws.onclose = function(){ ws = null; setTimeout(openWS, 1500); };
+      ws.onerror = function(){};
+    }
+    transports.push(function(m){
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+    });
+    openWS();
+  })();
+}
+if (!transports.length){
+  document.getElementById('connText').textContent = 'no transport: browser lacks BroadcastChannel and no ?room= given';
   return;
 }
-function send(m){ m.proto = PROTO; m.from = 'remote'; chan.postMessage(m); }
+function send(m){
+  m.proto = PROTO; m.from = 'remote';
+  for (var ti = 0; ti < transports.length; ti++) transports[ti](m);
+}
 
 var spec = null, values = null, running = false;
 var head = 0, view = 0, first = 0;   // clock: latest frame, viewed frame, oldest captured
@@ -310,8 +340,7 @@ function connected(ver){
   if (connTimer){ clearInterval(connTimer); connTimer = null; }
 }
 
-chan.onmessage = function(e){
-  var m = e.data;
+function dispatch(m){
   if (!m || m.from !== 'model') return;
   if (m.t === 'describe') reflectAll(m);
   else if (m.t === 'state') reflect(m.key, m.value);
@@ -341,7 +370,7 @@ chan.onmessage = function(e){
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
   }
   else if (m.t === 'err'){ $('connText').textContent = 'model: ' + m.msg; }
-};
+}
 
 // ---- controls that are not sliders ----------------------------------------
 $('b-go').addEventListener('click', function(){ send({t:'do', cmd:'go'}); });

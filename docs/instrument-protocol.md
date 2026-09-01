@@ -14,11 +14,22 @@ is the next planned step.
 
 ## Transport
 
-Messages are transport-agnostic JSON objects. Milestone 1 carries them over a
-`BroadcastChannel` named **`boids-lab`** — same browser, same origin, so the
-pages must be served over http (BroadcastChannel does not cross `file://`
-pages). A WebSocket relay for cross-device (tablet → big screen) is the planned
-second transport; nothing in the message format assumes BroadcastChannel.
+Messages are transport-agnostic JSON objects. Two transports exist, and every
+page can run both at once (the model answers a same-browser remote and a
+LAN tablet simultaneously — its echoes keep them agreeing):
+
+- **BroadcastChannel `boids-lab`** — same browser, same origin. The pages
+  must be served over http (BroadcastChannel does not cross `file://`).
+- **WebSocket rooms via `relay.js`** — cross-device. `node relay.js` serves
+  the static pages *and* relays `ws://<host>/ws/<room>`; a page joins a room
+  with `?room=CODE` in its URL, JSON-stringifying each message. The relay is
+  deliberately dumb: it forwards every message to every other socket in the
+  room and understands nothing about the protocol — the model stays the
+  single source of truth. Clients auto-reconnect; the model re-announces
+  `describe` on every socket open, so reconnection needs no ceremony.
+
+Pairing: `model.html?room` (no value) generates a 4-character room code and
+shows the tablet URL in the corner of the display; `?room=CODE` pins the code.
 
 Every message carries an envelope:
 
@@ -189,8 +200,20 @@ re-grows it on the viewer's own model, which is what makes it unfakeable:
   not reproduce. Any change to `step()`'s arithmetic bumps `MODEL_VER`.
 - A 200-bird, two-branch experiment serializes to ~5 KB.
 
-## Still open (milestone 3+)
+## Clients
 
-Cross-device transport (WebSocket relay + pairing), ensemble starts (same
-params, many seeds), lesson sequences, observer/read-only remotes, and the
-tablet-first layout with full numeric entry.
+Every interface is a client of this contract, owning its own presentation:
+
+- `remote.html` — phone-shaped panel, sliders-first.
+- `tablet.html` — the instrument: slider + numeric entry per live parameter,
+  a visually distinct setup form (numbers define a *start*, and nothing
+  happens until Apply), capture/branch/claims, run files, and **ensembles** —
+  same setup numbers across K deterministically-derived seeds, F frames each,
+  order parameters tabulated with mean ± σ. The ensemble is pure client-side
+  orchestration of `setup` + `goto` + telemetry; the model needed nothing new.
+
+## Still open (milestone 4+)
+
+Lesson sequences (an ordered list of setups/segments advanced one tap at a
+time), observer/read-only remotes, QR-code pairing, and divergence curves
+between branches.

@@ -15,7 +15,7 @@ button just produces uglier URLs from `file://`).
 
 then open http://localhost:8013/
 
-## The instrument (v2, milestones 1–2)
+## The instrument (v2, milestones 1–3)
 
 A second version for study: the model with **no control panel**, driven
 entirely through a published API. `model.html` is the display — it boots
@@ -32,14 +32,26 @@ The whole experiment (start state, every change, every branch, claim
 markers) exports as a single small **run file** that replays bit-identically:
 load it, press "go to", and the model re-grows the run.
 
-Both pages must be served over http (the transport is a BroadcastChannel,
-which does not cross `file://` pages). Open them in two windows of the same
-browser:
+Milestone 3 adds cross-device control and the tablet. `tablet.html` is the
+full instrument: numeric entry beside every slider, a setup form where
+presets fill fields and nothing happens until Apply, and **ensembles** —
+the same setup across many seeds with order parameters tabulated.
+
+**Same machine** (BroadcastChannel; any static server over http):
 
     http://localhost:8013/model.html
-    http://localhost:8013/remote.html
+    http://localhost:8013/tablet.html      (or remote.html for the phone layout)
 
-The contract between them is `docs/instrument-protocol.md`; the design
+**Across devices** (big screen + tablet on the LAN) — one command, zero
+dependencies:
+
+    node relay.js
+
+then open the URLs it prints: `model.html?room=class` on the display,
+`tablet.html?room=class` on the tablet. `model.html?room` (no value)
+generates a room code and shows the tablet URL in the corner.
+
+The contract between all pages is `docs/instrument-protocol.md`; the design
 reasoning is `docs/instrumenting-the-flock.md`. The toy (`index.html`) is
 frozen and unaffected — model and toy are a conscious fork, never synced.
 
