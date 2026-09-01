@@ -1,0 +1,8 @@
+{
+  "name": "boids-lab-tests",
+  "private": true,
+  "description": "Test suites for the boids instrument. The main repo stays zero-dependency; jsqr here only powers the QR decode round-trip.",
+  "devDependencies": {
+    "jsqr": "^1.4.0"
+  }
+}

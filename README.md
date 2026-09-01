@@ -89,6 +89,15 @@ show up in the UI automatically.
 - Stripped the glasswall remote plumbing (BroadcastChannel / SSE / `?remote=1`
   cast mode) — that machinery belongs to the multi-page exhibit, not this lab.
 
+## Tests
+
+    node test/protocol-test.js     # 40 checks: contract, determinism, capture, run files, divergence
+    node test/ws-test.js           # 12 checks: real relay, real WebSockets, room isolation
+    cd test && npm install && node qr-test.js    # QR decode round-trip (skips without jsqr)
+
+See `test/README.md` for what each covers and hard-won notes for future
+test authors.
+
 ## Reading
 
 - `docs/driving-the-instrument.md` — **start here to use the tablet**: the
