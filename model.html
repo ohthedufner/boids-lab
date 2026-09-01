@@ -76,7 +76,8 @@ var SPEC = {
   crowd:  {kind:'display',    label:'Crowd',      min:1,    max:20,   step:1, integer:true},
   stops:  {kind:'display',    label:'Ramp',       colors:true},
   hash:   {kind:'engine',     label:'Spatial hash', min:0,  max:1,    step:1, integer:true},
-  rate:   {kind:'clock',      label:'Clock rate', min:0.25, max:8,    step:0.25}
+  rate:   {kind:'clock',      label:'Clock rate', min:0.25, max:8,    step:0.25},
+  buf:    {kind:'engine',     label:'Buffer',     min:100,  max:3600, step:100, integer:true}
 };
 
 var PRESETS = {
@@ -89,7 +90,7 @@ var PRESETS = {
 
 // live parameter values
 var P = {sep:1.6, ali:1.0, coh:0.9, vis:52, spd:2.6, fade:0.16,
-         crowd:7, hash:1, pointer:0, rate:1};
+         crowd:7, hash:1, pointer:0, rate:1, buf:600};
 var seed0 = 1234567;      // the setup seed (immutable between setups)
 var aspect = 16/9;
 var STOPS = ['#3D63D8', '#2FB6A8', '#EFC94C', '#FF5C38'];
@@ -115,7 +116,8 @@ var FW = Math.round(LOG_H * aspect), FH = LOG_H;   // logical field
 var S = 1, OX = 0, OY = 0;                         // letterbox transform
 var px, py, vx, vy, nb, N = 0;
 var mx = -1e5, my = -1e5, checks = 0;              // pointer, logical coords
-var frame = 0, running = false, acc = 0;
+var frame = 0, viewFrame = 0, running = false, acc = 0;
+var replayTarget = -1;
 var needsDraw = true;
 var seed = 1;
 
@@ -147,6 +149,190 @@ function init(n){
     var a = rnd() * 6.2831853;
     vx[i] = Math.cos(a) * P.spd; vy[i] = Math.sin(a) * P.spd;
   }
+}
+
+// A loaded run file supplies the frame-0 state explicitly (sidesteps the
+// cos/sin engine-portability catch entirely).
+function initFromState(st){
+  N = st.px.length;
+  px = new Float32Array(st.px); py = new Float32Array(st.py);
+  vx = new Float32Array(st.vx); vy = new Float32Array(st.vy);
+  nb = new Float32Array(N);
+}
+
+// ---- capture buffer -------------------------------------------------------
+// A rolling window of raw state, always recording while the sim runs.
+// PAUSE IS THE CAPTURE: you cannot decide to record before the interesting
+// thing happens, so stopping doesn't begin a recording — it stops the
+// discarding. Scrubbing inside the window is pure array indexing.
+var MEM_BUDGET = 60e6;   // buffer memory cap: 20 bytes/bird/frame
+var bufSlots = [], bufFirst = 0, bufLast = -1;
+
+function bufCapEff(){
+  return Math.max(50, Math.min(P.buf, Math.floor(MEM_BUDGET / (20 * N)) || 50));
+}
+function bufReset(){
+  bufSlots = new Array(bufCapEff());
+  bufFirst = 0; bufLast = -1;
+}
+function bufResize(){    // keep the newest frames that still fit
+  var cap = bufCapEff(), old = bufSlots, oldLen = old.length, oldLast = bufLast;
+  bufSlots = new Array(cap);
+  if (oldLast < 0){ bufFirst = 0; bufLast = -1; return; }
+  bufFirst = Math.max(bufFirst, oldLast - cap + 1);
+  for (var f = bufFirst; f <= oldLast; f++){
+    var s = old[f % oldLen];
+    if (s && s.f === f) bufSlots[f % cap] = s;
+  }
+}
+function bufPush(){
+  var cap = bufSlots.length || 1;
+  var idx = frame % cap, s = bufSlots[idx];
+  if (!s || s.px.length !== N){
+    s = {f:-1, px:new Float32Array(N), py:new Float32Array(N),
+         vx:new Float32Array(N), vy:new Float32Array(N), nb:new Float32Array(N)};
+    bufSlots[idx] = s;
+  }
+  s.f = frame;
+  s.px.set(px); s.py.set(py); s.vx.set(vx); s.vy.set(vy); s.nb.set(nb);
+  bufLast = frame;
+  if (bufLast - bufFirst + 1 > cap) bufFirst = bufLast - cap + 1;
+}
+function bufLoad(f){
+  var s = bufSlots[f % (bufSlots.length || 1)];
+  if (!s || s.f !== f) return false;
+  px.set(s.px); py.set(s.py); vx.set(s.vx); vy.set(s.vy); nb.set(s.nb);
+  viewFrame = f; needsDraw = true;
+  return true;
+}
+
+// ---- run tree -------------------------------------------------------------
+// The recording is a recipe, not a film: setup profile + explicit frame-0
+// state + frame-indexed change logs, arranged as a tree of branches.
+// Determinism makes the recipe sufficient — and unfakeable: replaying it
+// re-grows the run on the viewer's own model.
+var tree = null;
+var pending = [];   // scheduled changes ahead of us on a loaded run's path
+
+function paramsSnapshot(){
+  return {sep:P.sep, ali:P.ali, coh:P.coh, vis:P.vis, spd:P.spd,
+          pointer:P.pointer, hash:P.hash, fade:P.fade, crowd:P.crowd,
+          stops:STOPS.slice()};
+}
+function newTree(){
+  tree = {
+    profile: currentValues(),
+    state0: {px:px.slice(0), py:py.slice(0), vx:vx.slice(0), vy:vy.slice(0)},
+    nodes: [{id:0, parent:null, startFrame:0, startParams:paramsSnapshot(),
+             changes:[], endFrame:0}],
+    active: 0,
+    claims: [],
+    tainted: !!P.pointer
+  };
+  pending = [];
+}
+function activeNode(){ return tree.nodes[tree.active]; }
+function logChange(k, v){
+  if (!tree) return;
+  if (k === 'rate' || k === 'buf') return;   // viewing-side only; the trajectory never sees them
+  activeNode().changes.push([frame, k, Array.isArray(v) ? v.slice() : v]);
+  if (k === 'pointer' && v) tree.tainted = true;
+}
+// Adopt the viewed frame as the present. The frames ahead of it are
+// abandoned (they stay recorded on the parent node); a new node begins.
+function branchHere(){
+  var f = viewFrame;
+  frame = f; bufLast = f; acc = 0;
+  pending = [];
+  var n = {id:tree.nodes.length, parent:tree.active, startFrame:f,
+           startParams:paramsSnapshot(), changes:[], endFrame:f};
+  tree.nodes.push(n); tree.active = n.id;
+  needsDraw = true;
+  sendClock(); sendTree();
+}
+// The active path's remaining changes, flattened for scheduled replay.
+// Parent changes at or past a child's branch frame belong to the abandoned
+// future; the child's startParams snapshot re-establishes its own start.
+function flattenActivePath(){
+  var path = [], id = tree.active;
+  while (id !== null && id !== undefined){
+    var n = tree.nodes[id]; path.unshift(n); id = n.parent;
+  }
+  var out = [];
+  for (var i = 0; i < path.length; i++){
+    if (i > 0) out.push([path[i].startFrame, '@params', path[i].startParams]);
+    var lim = (i + 1 < path.length) ? path[i + 1].startFrame : Infinity;
+    var ch = path[i].changes;
+    for (var j = 0; j < ch.length; j++) if (ch[j][0] < lim) out.push(ch[j]);
+  }
+  out.sort(function(a, b){ return a[0] - b[0]; });
+  return out;
+}
+function applyScheduled(){
+  while (pending.length && pending[0][0] <= frame){
+    var c = pending.shift();
+    if (c[1] === '@params'){
+      var sp = c[2];
+      for (var k in sp){ if (k === 'stops') setStops(sp[k]); else P[k] = sp[k]; }
+      needsDraw = true;
+    } else {
+      applyValue(c[1], c[2]);
+      send({t:'state', key:c[1], value:c[2], frame:frame});  // sliders follow the replay
+    }
+  }
+}
+
+// ---- run file serialization -----------------------------------------------
+function b64FromF32(a){
+  var u8 = new Uint8Array(a.buffer, a.byteOffset, a.length * 4);
+  var s = '', CH = 0x8000;
+  for (var i = 0; i < u8.length; i += CH)
+    s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  return btoa(s);
+}
+function f32FromB64(b){
+  var s = atob(b), u8 = new Uint8Array(s.length);
+  for (var i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+  return new Float32Array(u8.buffer);
+}
+function buildRunFile(){
+  return {
+    format:'boids-run', formatVersion:1,
+    model:MODEL_VER, proto:PROTO,
+    created:Date.now(),
+    field:{aspect:aspect, h:LOG_H},
+    profile:tree.profile,
+    state0:{enc:'f32le-b64', n:tree.state0.px.length,
+      px:b64FromF32(tree.state0.px), py:b64FromF32(tree.state0.py),
+      vx:b64FromF32(tree.state0.vx), vy:b64FromF32(tree.state0.vy)},
+    nodes:tree.nodes, active:tree.active,
+    claims:tree.claims, tainted:tree.tainted
+  };
+}
+function applyLoad(file){
+  if (!file || file.format !== 'boids-run')
+    return send({t:'err', of:'load', msg:'not a boids-run file'});
+  if (file.model !== MODEL_VER)
+    return send({t:'err', of:'load', msg:'file is model v' + file.model +
+      '; this model is v' + MODEL_VER + ' — trajectories would not reproduce'});
+  var st;
+  try {
+    st = {px:f32FromB64(file.state0.px), py:f32FromB64(file.state0.py),
+          vx:f32FromB64(file.state0.vx), vy:f32FromB64(file.state0.vy)};
+  } catch(e){ return send({t:'err', of:'load', msg:'corrupt state block'}); }
+  if (st.px.length !== file.state0.n || st.py.length !== st.px.length ||
+      st.vx.length !== st.px.length || st.vy.length !== st.px.length)
+    return send({t:'err', of:'load', msg:'state length mismatch'});
+  var prof = {};
+  for (var k in file.profile) prof[k] = file.profile[k];
+  prof.aspect = file.field.aspect;
+  prof.state = st; prof.run = false;
+  applySetup(prof);
+  // adopt the file's history over the fresh root applySetup just made
+  tree.nodes = file.nodes; tree.active = file.active;
+  tree.claims = file.claims || []; tree.tainted = !!file.tainted;
+  pending = flattenActivePath();
+  sendTree();
 }
 
 // ---- spatial hash ---------------------------------------------------------
@@ -317,18 +503,25 @@ function orderParams(){
 // ---- clock ----------------------------------------------------------------
 function setRunning(r){
   running = r;
+  if (r) replayTarget = -1;
   statusEl.classList.toggle('run', running);
   updateStatus();
-  send({t:'clock', running:running, frame:frame, rate:P.rate});
+  sendClock();
 }
 function stepOnce(){
+  applyScheduled();
   var t0 = performance.now();
-  step(); frame++;
+  step(); frame++; viewFrame = frame;
   msAcc += performance.now() - t0; stepsTimed++;
+  if (tree) activeNode().endFrame = frame;
+  bufPush();
   needsDraw = true;
 }
 function updateStatus(){
-  statusEl.textContent = 'paused · frame ' + frame;
+  statusEl.textContent =
+    replayTarget >= 0 ? 'replaying · ' + viewFrame + ' / ' + replayTarget :
+    viewFrame < frame ? 'paused · viewing ' + viewFrame + ' of ' + frame :
+    'paused · frame ' + frame;
 }
 
 var lastT = performance.now(), fpsAcc = 0, fpsFr = 0, fps = 0;
@@ -340,6 +533,17 @@ function loop(t){
     var guard = 0;
     while (acc >= 1 && guard < 16){ stepOnce(); acc -= 1; guard++; }
     if (acc >= 1) acc = 0;   // can't keep up; drop the debt rather than spiral
+  } else if (replayTarget >= 0){
+    // chunked fast-forward: walk the buffer where it exists, simulate past
+    // its end, ~30 ms per animation frame so the page stays alive
+    var t0r = performance.now();
+    while (viewFrame < replayTarget && performance.now() - t0r < 30){
+      if (viewFrame < frame) bufLoad(viewFrame + 1);
+      else stepOnce();
+    }
+    if (viewFrame >= replayTarget) replayTarget = -1;
+    sendClock();
+    needsDraw = true;
   }
   if (needsDraw){ draw(); needsDraw = false; if (!running) updateStatus(); }
   if (fpsAcc > 500){
@@ -367,10 +571,15 @@ function applySetup(profile){
   }
   FW = Math.round(LOG_H * aspect); FH = LOG_H;
   resize();
-  var n = clampSpec('cnt', 'cnt' in profile ? profile.cnt : N || 500);
-  setSeed(seed0);
-  init(n);
-  frame = 0; acc = 0; needsDraw = true;
+  if (profile.state){
+    initFromState(profile.state);
+  } else {
+    var n = clampSpec('cnt', 'cnt' in profile ? profile.cnt : N || 500);
+    setSeed(seed0);
+    init(n);
+  }
+  frame = 0; viewFrame = 0; acc = 0; replayTarget = -1; needsDraw = true;
+  bufReset(); newTree(); bufPush();
   setRunning(!!profile.run);
   send({t:'setupDone', values:currentValues(), clock:clockState()});
 }
@@ -408,7 +617,26 @@ function currentValues(){
   for (var k in P) v[k] = P[k];
   return v;
 }
-function clockState(){ return {running:running, frame:frame, rate:P.rate}; }
+function clockState(){
+  return {running:running, frame:frame, viewFrame:viewFrame,
+          bufFirst:bufFirst, rate:P.rate, replaying:replayTarget >= 0};
+}
+function sendClock(){
+  var c = clockState(); c.t = 'clock';
+  send(c);
+  updateStatus();
+}
+function treeState(){
+  if (!tree) return null;
+  return {
+    nodes: tree.nodes.map(function(n){
+      return {id:n.id, parent:n.parent, startFrame:n.startFrame,
+              endFrame:n.endFrame, changes:n.changes.length};
+    }),
+    active: tree.active, claims: tree.claims, tainted: tree.tainted
+  };
+}
+function sendTree(){ send({t:'tree', tree:treeState()}); }
 
 function describeMsg(){
   return {
@@ -418,8 +646,20 @@ function describeMsg(){
     values:currentValues(),
     clock:clockState(),
     field:{aspect:aspect, w:FW, h:FH},
-    presets:PRESETS
+    presets:PRESETS,
+    tree:treeState()
   };
+}
+
+// validate + assign, no logging or echo — shared by live sets and replay
+function applyValue(k, v){
+  if (k === 'stops') return setStops(v) ? v : null;
+  var cv2 = clampSpec(k, v);
+  if (cv2 === null) return null;
+  P[k] = cv2;
+  if (k === 'fade' || k === 'crowd') needsDraw = true;
+  if (k === 'buf') bufResize();
+  return cv2;
 }
 
 function applySet(k, v){
@@ -427,23 +667,62 @@ function applySet(k, v){
   if (!s) return send({t:'err', of:'set', key:k, msg:'unknown parameter'});
   if (s.kind === 'setup')
     return send({t:'err', of:'set', key:k, msg:'setup-only: send setup()'});
-  if (k === 'stops'){
-    if (!setStops(v)) return send({t:'err', of:'set', key:k, msg:'bad colour list'});
-  } else {
-    var cv2 = clampSpec(k, v);
-    if (cv2 === null) return send({t:'err', of:'set', key:k, msg:'bad value'});
-    P[k] = cv2; v = cv2;
-    if (k === 'fade' || k === 'crowd') needsDraw = true;
+  var steers = (s.kind === 'behavioral' || s.kind === 'engine') && k !== 'buf';
+  if (steers){
+    if (viewFrame < frame)
+      return send({t:'err', of:'set', key:k, msg:'scrubbed into the past — branch here first'});
+    if (pending.length) branchHere();   // departing a loaded run's path is a branch
   }
+  var applied = applyValue(k, v);
+  if (applied === null)
+    return send({t:'err', of:'set', key:k, msg:k === 'stops' ? 'bad colour list' : 'bad value'});
+  logChange(k, applied);
   // echo so every remote (including late joiners mid-drag) stays true
-  send({t:'state', key:k, value:v, frame:frame});
+  send({t:'state', key:k, value:applied, frame:frame});
 }
 
-function applyDo(cmd){
-  if (cmd === 'go') setRunning(true);
-  else if (cmd === 'pause') setRunning(false);
-  else if (cmd === 'step'){ if (!running){ stepOnce(); send({t:'clock', running:false, frame:frame, rate:P.rate}); } }
+function applyDo(cmd, m){
+  if (cmd === 'go'){
+    if (viewFrame < frame)
+      return send({t:'err', of:'do', msg:'scrubbed into the past — resume from end, or branch here'});
+    setRunning(true);
+    return;
+  }
+  if (cmd === 'pause'){ replayTarget = -1; setRunning(false); return; }
+  if (running) return send({t:'err', of:'do', msg:'pause first: ' + cmd});
+  if (replayTarget >= 0) return send({t:'err', of:'do', msg:'replay in progress'});
+  if (cmd === 'step'){
+    if (viewFrame < frame) bufLoad(viewFrame + 1);   // walking the captured log
+    else stepOnce();
+    sendClock();
+  }
+  else if (cmd === 'back'){
+    if (viewFrame > bufFirst){ bufLoad(viewFrame - 1); sendClock(); }
+    else send({t:'err', of:'do', msg:'buffer exhausted — frame ' + bufFirst + ' is the oldest captured'});
+  }
+  else if (cmd === 'resumeEnd'){ bufLoad(frame); setRunning(true); }
+  else if (cmd === 'branchHere'){ branchHere(); }
+  else if (cmd === 'goto'){
+    var f = Math.round(m && m.frame);
+    if (isNaN(f) || f < 0) return send({t:'err', of:'do', msg:'goto needs a frame'});
+    if (f >= bufFirst && f <= bufLast){ bufLoad(f); sendClock(); }
+    else if (f > frame){
+      if (viewFrame < frame) bufLoad(frame);
+      replayTarget = f; sendClock();
+    }
+    else send({t:'err', of:'do', msg:'frame ' + f + ' fell out of the buffer — reload the run file to replay from the start'});
+  }
   else send({t:'err', of:'do', msg:'unknown command: ' + cmd});
+}
+
+function applyScrub(f){
+  if (running) return send({t:'err', of:'scrub', msg:'pause first'});
+  if (replayTarget >= 0) return send({t:'err', of:'scrub', msg:'replay in progress'});
+  f = Math.round(f);
+  if (f < bufFirst) f = bufFirst;
+  if (f > bufLast) f = bufLast;
+  if (bufLoad(f)) sendClock();
+  else send({t:'err', of:'scrub', msg:'frame not in buffer'});
 }
 
 if (chan){
@@ -454,11 +733,23 @@ if (chan){
     else if (m.t === 'describe') send(describeMsg());
     else if (m.t === 'set') applySet(m.key, m.value);
     else if (m.t === 'setup') applySetup(m.profile);
-    else if (m.t === 'do') applyDo(m.cmd);
+    else if (m.t === 'do') applyDo(m.cmd, m);
+    else if (m.t === 'scrub') applyScrub(m.frame);
+    else if (m.t === 'claim'){
+      if (tree){
+        tree.claims.push({node:tree.active, from:m.from|0, to:m.to|0,
+                          note:String(m.note || '').slice(0, 200)});
+        sendTree();
+      }
+    }
+    else if (m.t === 'export'){
+      if (tree) send({t:'runFile', file:buildRunFile()});
+    }
+    else if (m.t === 'load') applyLoad(m.file);
   };
   setInterval(function(){
     var o = orderParams();
-    send({t:'telemetry', frame:frame, running:running, fps:running?fps:0,
+    send({t:'telemetry', frame:viewFrame, running:running, fps:running?fps:0,
           stepMs:+lastMs.toFixed(2), checks:checks,
           meanNb:+o.meanNb.toFixed(2), pol:+o.pol.toFixed(3), rot:+o.rot.toFixed(3)});
   }, 250);

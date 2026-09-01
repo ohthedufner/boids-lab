@@ -15,7 +15,7 @@ button just produces uglier URLs from `file://`).
 
 then open http://localhost:8013/
 
-## The instrument (v2, milestone 1)
+## The instrument (v2, milestones 1–2)
 
 A second version for study: the model with **no control panel**, driven
 entirely through a published API. `model.html` is the display — it boots
@@ -24,6 +24,13 @@ paused at frame 0 and waits (add `?autorun` for the ambient case).
 (go / pause / single-step / rate), telemetry readouts including polarization
 and rotation order parameters, and a visually distinct setup card for
 deterministic restarts (seed, flock size, aspect).
+
+Milestone 2 adds the memory: a rolling capture buffer where **pause is the
+capture** — scrub back and forth through the recent past, then resume the
+timeline or **branch** from any captured frame and try a different future.
+The whole experiment (start state, every change, every branch, claim
+markers) exports as a single small **run file** that replays bit-identically:
+load it, press "go to", and the model re-grows the run.
 
 Both pages must be served over http (the transport is a BroadcastChannel,
 which does not cross `file://` pages). Open them in two windows of the same

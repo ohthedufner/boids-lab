@@ -40,12 +40,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
 input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--accent);border:none}
 input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
-input[type=number]{
+input[type=number],input[type=text]{
   font:inherit;font-size:13px;width:100%;padding:5px 8px;border-radius:7px;
   background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
   font-variant-numeric:tabular-nums;
 }
-input[type=number]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=number]:focus-visible,input[type=text]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .btns{display:flex;flex-wrap:wrap;gap:6px}
 button{
   font:inherit;font-size:11.5px;padding:6px 10px;border-radius:7px;cursor:pointer;
@@ -107,11 +107,28 @@ button.wide{flex:1}
     <div class="btns" style="margin-bottom:10px">
       <button id="b-go" class="wide">Go</button>
       <button id="b-pause" class="wide">Pause</button>
-      <button id="b-step" class="wide">Step</button>
+      <button id="b-back" class="wide">◀ Back</button>
+      <button id="b-step" class="wide">Step ▶</button>
     </div>
     <div class="row"><div class="lbl"><span>Clock rate</span><b id="v-rate">1</b></div>
       <input type="range" id="s-rate" min="0.25" max="8" step="0.25" value="1" aria-label="Clock rate"></div>
     <div class="stats"><span>frame <b id="frame">—</b></span></div>
+  </div>
+
+  <div class="card">
+    <h2>Capture</h2>
+    <div class="row"><div class="lbl"><span>Scrub</span><b id="v-scrub">—</b></div>
+      <input type="range" id="s-scrub" min="0" max="0" step="1" value="0" aria-label="Scrub captured frames"></div>
+    <div class="btns" style="margin-bottom:10px">
+      <button id="b-resume" class="wide">Resume from end</button>
+      <button id="b-branch" class="wide">Branch here</button>
+    </div>
+    <div class="grid2" style="margin-bottom:8px">
+      <input type="text" id="f-note" placeholder="claim note…" aria-label="Claim note">
+      <button id="b-claim">Mark claim</button>
+    </div>
+    <div id="claims" class="stats" style="flex-direction:column;align-items:stretch;gap:4px"></div>
+    <p class="note">The buffer is always recording; <b>pause is the capture</b>. Scrub freely — then resume the timeline, or branch and try a different future.</p>
   </div>
 
   <div class="card">
@@ -125,6 +142,20 @@ button.wide{flex:1}
       <span>rotation <b id="o-rot">—</b></span>
     </div>
     <p class="note">polarization ≈ 1: travelling as one flock. rotation high: milling. Both near 0: a swarm.</p>
+  </div>
+
+  <div class="card">
+    <h2>Run file</h2>
+    <div class="btns" style="margin-bottom:10px">
+      <button id="b-export" class="wide">Export</button>
+      <button id="b-loadbtn" class="wide">Load…</button>
+    </div>
+    <input type="file" id="f-load" accept=".json,application/json" style="display:none">
+    <div class="grid2">
+      <div class="field"><label for="f-goto">Go to frame</label><input type="number" id="f-goto" min="0" step="1" value="0"></div>
+      <div class="field"><label>&nbsp;</label><button id="b-goto" class="wide" style="width:100%">Go to</button></div>
+    </div>
+    <p class="note">A run file is the whole experiment — start state, every change, every branch, every claim. A few KB, and it replays bit-identically on this model version.</p>
   </div>
 
   <div class="card" id="setup">
@@ -156,6 +187,7 @@ if (!chan){
 function send(m){ m.proto = PROTO; m.from = 'remote'; chan.postMessage(m); }
 
 var spec = null, values = null, running = false;
+var head = 0, view = 0, first = 0;   // clock: latest frame, viewed frame, oldest captured
 var LIVE = ['sep','ali','coh','vis','spd'];      // behavioural sliders
 var DISP = ['fade','crowd'];                      // display sliders
 var $ = function(id){ return document.getElementById(id); };
@@ -228,10 +260,33 @@ function paintToggle(id, label, v){
 }
 function reflectClock(c){
   running = c.running;
+  head = c.frame;
+  view = ('viewFrame' in c) ? c.viewFrame : c.frame;
+  first = ('bufFirst' in c) ? c.bufFirst : 0;
   $('b-go').classList.toggle('on', running);
   $('b-pause').classList.toggle('on', !running);
-  $('frame').textContent = c.frame;
+  $('frame').textContent = view < head ? view + ' / ' + head : head;
+  var s = $('s-scrub');
+  if (document.activeElement !== s){ s.min = first; s.max = head; s.value = view; }
+  $('v-scrub').textContent = (head > first ? 'f' + first + '–' + head : '—') +
+                             (c.replaying ? ' · replaying' : '');
   if ('rate' in c) reflect('rate', c.rate);
+}
+function reflectTree(t){
+  var host = $('claims'); host.innerHTML = '';
+  if (!t) return;
+  var info = document.createElement('div');
+  info.textContent = 'branches: ' + t.nodes.length + ' · active #' + t.active +
+                     (t.tainted ? ' · ⚠ pointer used — not replayable' : '');
+  host.appendChild(info);
+  (t.claims || []).forEach(function(c){
+    var b = document.createElement('button');
+    b.textContent = '→ f' + c.from + (c.note ? ' — ' + c.note : '');
+    b.style.textAlign = 'left';
+    b.title = 'Go to this claim';
+    b.addEventListener('click', function(){ send({t:'do', cmd:'goto', frame:c.from}); });
+    host.appendChild(b);
+  });
 }
 function reflectAll(msg){
   spec = msg.spec; values = msg.values;
@@ -243,6 +298,7 @@ function reflectAll(msg){
   if (document.activeElement !== $('f-cnt')) $('f-cnt').value = values.cnt;
   if (document.activeElement !== $('f-aspect')) $('f-aspect').value = (+values.aspect).toFixed(2);
   reflectClock(msg.clock);
+  if ('tree' in msg) reflectTree(msg.tree);
   connected(msg.version);
 }
 
@@ -265,7 +321,7 @@ chan.onmessage = function(e){
     reflectClock(m.clock);
   }
   else if (m.t === 'telemetry'){
-    $('frame').textContent = m.frame;
+    if (m.running) $('frame').textContent = m.frame;   // paused: clock messages own the display
     $('o-fps').textContent = m.running ? m.fps : '—';
     $('o-ms').textContent = m.stepMs;
     $('o-chk').textContent = m.checks >= 1e6 ? (m.checks/1e6).toFixed(1)+'M'
@@ -273,6 +329,16 @@ chan.onmessage = function(e){
     $('o-nb').textContent = m.meanNb;
     $('o-pol').textContent = m.pol;
     $('o-rot').textContent = m.rot;
+  }
+  else if (m.t === 'tree') reflectTree(m.tree);
+  else if (m.t === 'runFile'){
+    var blob = new Blob([JSON.stringify(m.file)], {type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'boids-run-s' + (m.file.profile && m.file.profile.seed || 0) +
+                 '-n' + (m.file.state0 && m.file.state0.n || 0) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
   }
   else if (m.t === 'err'){ $('connText').textContent = 'model: ' + m.msg; }
 };
@@ -288,6 +354,32 @@ $('s-rate').addEventListener('input', function(){
   var v = parseFloat(this.value);
   $('v-rate').textContent = v;
   send({t:'set', key:'rate', value:v});
+});
+$('b-back').addEventListener('click', function(){ send({t:'do', cmd:'back'}); });
+$('s-scrub').addEventListener('input', function(){
+  send({t:'scrub', frame:parseInt(this.value, 10)});
+});
+$('b-resume').addEventListener('click', function(){ send({t:'do', cmd:'resumeEnd'}); });
+$('b-branch').addEventListener('click', function(){ send({t:'do', cmd:'branchHere'}); });
+$('b-claim').addEventListener('click', function(){
+  send({t:'claim', from:view, to:view, note:$('f-note').value});
+  $('f-note').value = '';
+});
+$('b-export').addEventListener('click', function(){ send({t:'export'}); });
+$('b-loadbtn').addEventListener('click', function(){ $('f-load').click(); });
+$('f-load').addEventListener('change', function(){
+  var f = this.files && this.files[0];
+  this.value = '';
+  if (!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try { send({t:'load', file:JSON.parse(r.result)}); }
+    catch(e){ $('connText').textContent = 'not a valid run file'; }
+  };
+  r.readAsText(f);
+});
+$('b-goto').addEventListener('click', function(){
+  send({t:'do', cmd:'goto', frame:readNum('f-goto', 0)});
 });
 $('b-hash').addEventListener('click', function(){
   send({t:'set', key:'hash', value:values && values.hash ? 0 : 1});

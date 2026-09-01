@@ -5,10 +5,10 @@ drives it (`remote.html` is the first). Per the architecture decision inherited
 from ArtWall: **the model publishes an API and owns all state; every interface
 is a client and owns none.** What gets frozen is this contract, not markup.
 
-Status: milestone 1 (contract + same-machine transport). Capture, run files,
-and branching are milestone 2 — their semantics are settled in
-`instrumenting-the-flock.md` and the design conversation, but no messages for
-them exist yet.
+Status: milestones 1 and 2. The contract covers setup, live control, the
+clock, telemetry, the capture buffer (scrub / branch), and run files
+(export / load / replay / claims). Cross-device transport (WebSocket relay)
+is the next planned step.
 
 ---
 
@@ -46,7 +46,14 @@ Clients ignore messages whose `from` matches their own role.
 | `describe` | — | ask for the full contract + current truth |
 | `set` | `key`, `value` | change one live parameter |
 | `setup` | `profile` | **the determinate moment**: restart from frame 0 |
-| `do` | `cmd`: `go` \| `pause` \| `step` | clock control |
+| `do` | `cmd` (see below) | clock and capture commands |
+| `scrub` | `frame` | view a captured frame (paused only; clamped to the buffer) |
+| `claim` | `from`, `to`, `note` | mark a frame range on the active branch |
+| `export` | — | model replies with `runFile` |
+| `load` | `file` | restore a run file: state, tree, claims; paused at frame 0 |
+
+`do` commands: `go`, `pause`, `step`, `back`, `resumeEnd`, `branchHere`,
+`goto` (with `frame`). All but `go`/`pause` require the model to be paused.
 
 `setup.profile` may contain any parameter below plus `run` (boolean: start
 running, default false = hold at frame 0). Missing keys keep their current
@@ -59,10 +66,12 @@ flock every time (see determinism notes).
 
 | Message | Fields | Meaning |
 |---|---|---|
-| `describe` | `version`, `spec`, `values`, `clock`, `field`, `presets` | the contract as it currently stands |
-| `state` | `key`, `value`, `frame` | echo of every applied `set`, frame-stamped |
-| `clock` | `running`, `frame`, `rate` | sent on every clock change |
+| `describe` | `version`, `spec`, `values`, `clock`, `field`, `presets`, `tree` | the contract as it currently stands |
+| `state` | `key`, `value`, `frame` | echo of every applied `set` (including replayed ones), frame-stamped |
+| `clock` | `running`, `frame`, `viewFrame`, `bufFirst`, `rate`, `replaying` | sent on every clock/capture change; `frame` is the head, `viewFrame` the displayed frame, `bufFirst` the oldest captured |
 | `setupDone` | `values`, `clock` | a setup completed; full truth attached |
+| `tree` | `tree`: `{nodes, active, claims, tainted}` | the run tree changed (branch, claim, load) |
+| `runFile` | `file` | the serialized run (reply to `export`) |
 | `telemetry` | see below | 4 Hz readout stream |
 | `err` | `of`, `key?`, `msg` | a request was refused, and why |
 
@@ -98,7 +107,8 @@ Declared in the model's `spec` (part of `describe`) with `min`/`max`/`step`/
 | `pointer` | behavioural | mouse repulsion on the model page; **off by default** — an unlogged pointer pass would make a run unreproducible |
 | `fade` `crowd` `stops` | display | freely reversible; the simulation never sees them. `stops` is an array of ≥2 `#rrggbb` colours |
 | `hash` | engine | spatial hash on/off. No *intended* behavioural effect, but it changes float summation order, which diverges trajectories at bit level — so it must be recorded like a behavioural change |
-| `rate` | clock | simulation steps per animation frame (0.25–8); distinct from `spd`, which is how fast *birds* fly |
+| `buf` | engine | capture-buffer length in frames (100–3600), memory-capped at ~60 MB; never logged — the trajectory can't see it |
+| `rate` | clock | simulation steps per animation frame (0.25–8); distinct from `spd`, which is how fast *birds* fly. Never logged |
 
 Kinds are the three classes from `instrumenting-the-flock.md` (plus engine and
 clock): the difference between them is the lesson, and interfaces must not make
@@ -123,8 +133,64 @@ exactly on every display.
   will store the explicit frame-0 state (positions + velocities) as well.
 - The frame is the clock. Nothing is recorded against wall time.
 
-## Milestone 2 (settled in design, not yet in the protocol)
+## Capture, scrubbing, and branching
 
-Rolling raw-state capture buffer (pause = the capture), scrubbing, branch /
-resume-from-here, the single-file run-tree format (explicit initial state +
-frame-indexed change log + claim markers), and ensemble starts.
+The model keeps a **rolling buffer** of raw per-frame state (positions,
+velocities, neighbour counts — 20 bytes/bird/frame), always recording while
+the sim runs, discarding as it goes. **Pause is the capture**: you cannot
+decide to record before the interesting thing happens, so stopping doesn't
+begin a recording — it stops the discarding.
+
+While paused, `scrub`/`back`/`step` move `viewFrame` through the window
+`[bufFirst .. frame]` by pure array indexing — nothing is re-simulated, and
+display parameters can be retuned freely over a scrubbed frame. Two exits:
+
+- **`resumeEnd`** — return to the head frame and continue the timeline.
+- **`branchHere`** — adopt the viewed frame as the present. The frames ahead
+  of it are abandoned (they stay recorded on the parent node); a new tree
+  node begins at this frame, carrying the current parameters as its
+  `startParams`.
+
+Rules that keep the recording honest:
+
+- Behavioural and engine `set`s are **refused while scrubbed into the past**
+  (`branch here first`) — a change must have a well-defined frame.
+- A behavioural/engine `set` while scheduled (loaded-run) changes are still
+  pending **auto-branches**: departing the recorded path *is* a branch.
+- `goto f` scrubs if `f` is buffered, replays forward (chunked, ~30 ms per
+  animation frame) if `f` is ahead of the head, and refuses if `f` fell out
+  of the buffer (reload the run file to replay from frame 0).
+
+## The run file
+
+A single JSON file holding the **whole experiment as a recipe** — replay
+re-grows it on the viewer's own model, which is what makes it unfakeable:
+
+```
+{ format: "boids-run", formatVersion: 1, model, proto, created,
+  field: {aspect, h},
+  profile: {…},                      // full values at setup
+  state0: {enc:"f32le-b64", n, px, py, vx, vy},   // explicit frame-0 state
+  nodes: [{id, parent, startFrame, startParams, changes:[[frame,key,value],…], endFrame}, …],
+  active,                            // the path replay follows
+  claims: [{node, from, to, note}, …],
+  tainted }                          // pointer was used: not replayable
+```
+
+- `state0` is explicit (not just the seed) because `init()`'s cos/sin is the
+  one engine-portability risk; `step()` itself is bit-reproducible.
+- A change `[f, key, value]` was applied while the frame counter read `f`,
+  i.e. it governs the step `f → f+1`. Replay applies pending changes with
+  `frame ≤ counter` before each step.
+- On a branch's path, parent changes at or past the branch frame belong to
+  the abandoned future; the branch's `startParams` snapshot re-establishes
+  its own starting parameters.
+- `load` refuses a file whose `model` version differs — trajectories would
+  not reproduce. Any change to `step()`'s arithmetic bumps `MODEL_VER`.
+- A 200-bird, two-branch experiment serializes to ~5 KB.
+
+## Still open (milestone 3+)
+
+Cross-device transport (WebSocket relay + pairing), ensemble starts (same
+params, many seeds), lesson sequences, observer/read-only remotes, and the
+tablet-first layout with full numeric entry.
