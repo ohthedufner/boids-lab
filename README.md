@@ -1,93 +1,133 @@
 # Boids Lab
 
-One flock, one file. This is the boids toy from a larger multi-page exhibit,
-isolated so it can be explored and re-coloured on its own. Craig Reynolds' three rules
-(separation, alignment, cohesion), seven sliders, five presets, a spatial-hash
-toggle with a live cost counter, and a permalink that encodes the whole state.
+**A flock of birds for every screen in the house — and a laboratory for every
+question you ask it.**
 
-## Run it
+Craig Reynolds' three rules — separation, alignment, cohesion — running as
+single-file web pages with zero dependencies, no build step, and no accounts.
+Fly it on your TV. Steer it from your tablet. Rewind it, branch it, and measure
+the butterfly effect from the couch.
 
-Any static server works; double-clicking `index.html` also works (the Copy-link
-button just produces uglier URLs from `file://`).
+![Five hundred boids, coloured by how crowded each bird feels](docs/media/toy.png)
 
-    cd boids-lab
-    python -m http.server 8013
+**Fly it right now — nothing to install:**
 
-then open http://localhost:8013/
+- 🐦 **[The toy](https://ohthedufner.github.io/boids-lab/)** — sliders, presets,
+  and 500 birds in one page.
+- 🖼️ **[Ambient display](https://ohthedufner.github.io/boids-lab/model.html?autorun)** —
+  just the flock, no controls. Full-screen it and let it run.
+- 🎛️ **The full instrument** — open
+  [model.html](https://ohthedufner.github.io/boids-lab/model.html) in one tab and
+  [tablet.html](https://ohthedufner.github.io/boids-lab/tablet.html) in another.
+  They find each other automatically (same browser, no server): the first tab is
+  the display, the second is the control room.
 
-## The instrument (v2, milestones 1–4)
+## One flock, every screen
 
-A second version for study: the model with **no control panel**, driven
-entirely through a published API. `model.html` is the display — it boots
-paused at frame 0 and waits (add `?autorun` for the ambient case).
-`remote.html` is the first client: presets, live sliders, clock control
-(go / pause / single-step / rate), telemetry readouts including polarization
-and rotation order parameters, and a visually distinct setup card for
-deterministic restarts (seed, flock size, aspect).
+The pages are honest about what they're for, so pick per device:
 
-Milestone 2 adds the memory: a rolling capture buffer where **pause is the
-capture** — scrub back and forth through the recent past, then resume the
-timeline or **branch** from any captured frame and try a different future.
-The whole experiment (start state, every change, every branch, claim
-markers) exports as a single small **run file** that replays bit-identically:
-load it, press "go to", and the model re-grows the run.
+| Screen | Page | What it becomes |
+|---|---|---|
+| 📺 TV / big display | `model.html` | The flock and nothing else — no control panel, boots paused, waits for a client (`?autorun` for ambient mode) |
+| 🎛️ Tablet | `tablet.html` | The full instrument: sliders with numeric entry, clock, capture, setup, lessons, ensembles |
+| 📱 Phone | `remote.html` | A pocket remote: presets, sliders, clock |
+| 💻 Anything | `index.html` | The self-contained toy — the whole lab in one file |
+| 👀 Anyone else's phone | any client + `?observe` | Read-only: follow the driver's moves live |
 
-Milestone 3 adds cross-device control and the tablet. `tablet.html` is the
-full instrument: numeric entry beside every slider, a setup form where
-presets fill fields and nothing happens until Apply, and **ensembles** —
-the same setup across many seeds with order parameters tabulated.
+## The living-room setup
 
-**Same machine** (BroadcastChannel; any static server over http):
-
-    http://localhost:8013/model.html
-    http://localhost:8013/tablet.html      (or remote.html for the phone layout)
-
-**Across devices** (big screen + tablet on the LAN) — one command, zero
-dependencies:
+One command on any computer with [Node.js](https://nodejs.org) — a Windows
+desktop works great, and there's nothing to `npm install`:
 
     node relay.js
 
-then open the URLs it prints: `model.html?room=class` on the display,
-`tablet.html?room=class` on the tablet. `model.html?room` (no value)
-generates a room code and shows the tablet URL — text and QR code — in
-the corner whenever the model is paused.
+That serves the site to every browser on your network and prints the URLs to
+open. Put `model.html?room` on the TV's browser; whenever the flock is paused,
+a **QR code** sits in the corner — scan it with a tablet or phone and you're
+holding the controls. That's the whole pairing story.
 
-Milestone 4 adds the classroom layer: **lessons** (an ordered list of
-starts with talking points, built and advanced from the tablet, saved as a
-file), **observer mode** (`?observe` makes any client read-only — student
-phones follow the instructor's moves live), and the **divergence curve** —
-branch, nudge one number, and watch the mean distance between the two
-timelines' corresponding birds rise: the butterfly effect, measured. An
-unchanged branch reads exactly zero.
+![The model paused mid-flight, QR pairing code in the corner](docs/media/pairing.png)
 
-The contract between all pages is `docs/instrument-protocol.md`; the design
-reasoning is `docs/instrumenting-the-flock.md`. The toy (`index.html`) is
-frozen and unaffected — model and toy are a conscious fork, never synced.
+No relay handy? Any static server works for a single machine
+(`python -m http.server 8013`), and double-clicking `index.html` works for the
+toy. The hosted site above covers the zero-install case — it just can't cross
+devices, because GitHub Pages won't run the WebSocket relay.
 
-## Where the colours live
+## Things to try tonight
 
-Everything is in one clearly-marked block near the top of the script in
-`index.html` — look for `---- colour ----`:
+- **Ride the presets.** Flock, Swarm, School, Gnats, Crystal — each is a
+  different personality from the same three rules.
+- **Pause is a time machine.** The buffer is always recording, so pausing lets
+  you scrub back through the recent past, then resume — or **branch** from any
+  captured frame and try a different future.
+- **Break one rule at a time.** Zero out cohesion, then alignment, then
+  separation, and watch which ingredient each one was.
+- **Achieve a doughnut.** Tune until the flock mills in a ring — the rotation
+  readout tells you objectively when you've done it.
+- **Export the run.** A whole experiment — start state, every change, every
+  branch — saves as one small file that replays **bit-identically** anywhere.
 
-- **`STOPS`** — the ramp, as hex colours from *alone* to *crowded*. Edit these
-  freely; any number of stops works, blended evenly. Current ramp:
-  blue `#3D63D8` → teal `#2FB6A8` → yellow `#EFC94C` → hot orange `#FF5C38`.
+<table>
+<tr>
+<td width="62%"><img src="docs/media/tablet.png" alt="The tablet instrument: live sliders, clock, capture and scrub, setup form, lesson panel"></td>
+<td width="38%"><img src="docs/media/phone.png" alt="The phone remote: presets, live sliders, clock"></td>
+</tr>
+<tr>
+<td align="center"><code>tablet.html</code> — the control room</td>
+<td align="center"><code>remote.html</code> — the pocket remote</td>
+</tr>
+</table>
+
+## For the classroom and the curious
+
+Underneath the fun is a deliberately serious design: the model has **no control
+panel at all** and is driven entirely through a small published API
+(`docs/instrument-protocol.md`). That buys properties a demo can't offer:
+
+- **Determinism you can bank on.** Setup (seed, flock size, aspect) is the only
+  reproducible moment; the same numbers grow the same flock, bit for bit, on
+  every machine. Run files re-grow entire experiments exactly.
+- **Order parameters, not vibes.** Live polarization and rotation readouts —
+  the two numbers Couzin (2002) uses to separate swarm, torus, and polarized
+  phases — make challenges objectively checkable (`rot > 0.7` sustained is a
+  doughnut, no arguing).
+- **The butterfly effect, measured.** Branch from a captured frame, nudge one
+  parameter, and the divergence curve plots the mean distance between the two
+  timelines' corresponding birds. An unchanged branch reads exactly zero — the
+  instrument proves its own honesty.
+
+  <img src="docs/media/divergence.png" alt="Divergence panel: the curve rising as a nudged branch departs from the timeline it abandoned" width="560">
+
+- **Ensembles.** The same setup across many seeds, order parameters tabulated —
+  the difference between an anecdote and a distribution.
+- **Lessons and observers.** Build an ordered list of starts with talking
+  points, advance it from the tablet, and let a roomful of phones follow along
+  read-only (`?observe`).
+- **Sourced provenance.** The history docs trace every knob to Reynolds, Aoki,
+  Vicsek, Couzin, or STARFLAG — and say plainly which knobs have no ancestor.
+
+Clients build their interfaces from the model's published `spec`, so the
+protocol is also an invitation: anything that can open a WebSocket can drive
+the flock. The tests drive it with no browser at all.
+
+## The toy
+
+`index.html` is where it started: one file, one flock, seven sliders, five
+presets, a spatial-hash toggle with a live cost counter, and a permalink that
+encodes the whole state. It's kept as a conscious fork of the model — frozen,
+simple, and ideal for tinkering.
+
+Colours live in one clearly-marked block near the top of its script
+(`---- colour ----`):
+
+- **`STOPS`** — the ramp from *alone* to *crowded*, currently blue `#3D63D8` →
+  teal `#2FB6A8` → yellow `#EFC94C` → hot orange `#FF5C38`. Edit freely; any
+  number of stops works, and the panel's legend strip repaints itself from your
+  edits.
 - **`CROWD`** — the neighbour count where the ramp saturates. Set to **7**,
   which is a citation, not a taste: real starlings attend to their 6–7 nearest
   neighbours (Ballerini et al., PNAS 2008 — the STARFLAG project). A fully hot
   bird is seeing a real starling's neighbourhood.
-
-A legend strip in the panel paints the ramp live from `STOPS`, so your edits
-show up in the UI automatically.
-
-## Changed from the original
-
-- Colour was a two-point blue→orange blend that crossed muddy grey in the
-  middle; now a multi-stop lookup table with much stronger hue separation.
-- The neighbour-count divisor moved from 9 (arbitrary) to `CROWD = 7` (cited).
-- Added the legend strip and a sentence in the panel note.
-- Stripped the glasswall remote plumbing (BroadcastChannel / SSE / `?remote=1`
-  cast mode) — that machinery belongs to the multi-page exhibit, not this lab.
 
 ## Tests
 
@@ -95,16 +135,24 @@ show up in the UI automatically.
     node test/ws-test.js           # 12 checks: real relay, real WebSockets, room isolation
     cd test && npm install && node qr-test.js    # QR decode round-trip (skips without jsqr)
 
-See `test/README.md` for what each covers and hard-won notes for future
-test authors.
+See `test/README.md` for what each covers and hard-won notes for future test
+authors.
 
 ## Reading
 
 - `docs/driving-the-instrument.md` — **start here to use the tablet**: the
-  field guide for whoever is holding it, including living-room setup and
-  five things to try tonight.
+  field guide for whoever is holding it, including living-room setup and five
+  things to try tonight.
+- `docs/instrument-protocol.md` — the contract between every page; build your
+  own client from this.
+- `docs/instrumenting-the-flock.md` — why the model publishes an API instead of
+  owning a control panel.
 - `docs/boids-panel-stories.md` — the museum-placard prose for every control.
-- `docs/boids-history-and-provenance.md` — the sourced history: Reynolds,
-  Aoki, Vicsek, Couzin, STARFLAG, and which knobs have no ancestor at all.
+- `docs/boids-history-and-provenance.md` — the sourced history of every knob.
 - [Reynolds' boids page](https://www.red3d.com/cwr/boids/) ·
   [the 1987 paper](https://www.cs.toronto.edu/~dt/siggraph97-course/cwr87/)
+
+---
+
+MIT licensed. Screenshots in `docs/media/` are the real pages, captured from a
+running session.
