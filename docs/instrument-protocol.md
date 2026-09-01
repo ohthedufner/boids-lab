@@ -5,10 +5,10 @@ drives it (`remote.html` is the first). Per the architecture decision inherited
 from ArtWall: **the model publishes an API and owns all state; every interface
 is a client and owns none.** What gets frozen is this contract, not markup.
 
-Status: milestones 1 and 2. The contract covers setup, live control, the
-clock, telemetry, the capture buffer (scrub / branch), and run files
-(export / load / replay / claims). Cross-device transport (WebSocket relay)
-is the next planned step.
+Status: milestones 1–4. The contract covers setup, live control, the clock,
+telemetry, the capture buffer (scrub / branch), run files (export / load /
+replay / claims), cross-device transport, divergence measurement, and
+observer mode. Lessons are a client-side convention (see Clients).
 
 ---
 
@@ -29,7 +29,10 @@ LAN tablet simultaneously — its echoes keep them agreeing):
   `describe` on every socket open, so reconnection needs no ceremony.
 
 Pairing: `model.html?room` (no value) generates a 4-character room code and
-shows the tablet URL in the corner of the display; `?room=CODE` pins the code.
+shows the tablet URL — as text and as a **QR code** — in the corner of the
+display whenever the model is paused; `?room=CODE` pins the code. The QR
+encoder is self-contained in the model page (byte mode, ECC L, versions 1–5)
+and is verified by decode round-trip in the test suite.
 
 Every message carries an envelope:
 
@@ -62,6 +65,7 @@ Clients ignore messages whose `from` matches their own role.
 | `claim` | `from`, `to`, `note` | mark a frame range on the active branch |
 | `export` | — | model replies with `runFile` |
 | `load` | `file` | restore a run file: state, tree, claims; paused at frame 0 |
+| `divergence` | — | model replies `divSeries` for the active branch |
 
 `do` commands: `go`, `pause`, `step`, `back`, `resumeEnd`, `branchHere`,
 `goto` (with `frame`). All but `go`/`pause` require the model to be paused.
@@ -83,6 +87,7 @@ flock every time (see determinism notes).
 | `setupDone` | `values`, `clock` | a setup completed; full truth attached |
 | `tree` | `tree`: `{nodes, active, claims, tainted}` | the run tree changed (branch, claim, load) |
 | `runFile` | `file` | the serialized run (reply to `export`) |
+| `divSeries` | `node`, `series`: `[[frame, d], …]` | the active branch's divergence curve |
 | `telemetry` | see below | 4 Hz readout stream |
 | `err` | `of`, `key?`, `msg` | a request was refused, and why |
 
@@ -93,8 +98,8 @@ the model version that made them. `proto` bumps on message-format changes.
 ### Telemetry (4 Hz)
 
 `frame`, `running`, `fps`, `stepMs`, `checks` (neighbour comparisons this
-frame), `meanNb` (mean neighbour count), and two order parameters over the
-whole flock:
+frame), `meanNb` (mean neighbour count), `div` (latest divergence value, or
+null — see below), and two order parameters over the whole flock:
 
 - **`pol`** — polarization, |mean unit velocity|. ≈1 when travelling as one.
 - **`rot`** — rotation, |mean tangential unit component| about the flock
@@ -200,6 +205,18 @@ re-grows it on the viewer's own model, which is what makes it unfakeable:
   not reproduce. Any change to `step()`'s arithmetic bumps `MODEL_VER`.
 - A 200-bird, two-branch experiment serializes to ~5 KB.
 
+## Divergence
+
+When a branch simulates forward, each new frame overwrites the abandoned
+timeline's twin frame in the capture buffer. Just before overwriting, the
+model measures the **mean toroidal distance between corresponding birds** —
+the divergence curve, recorded on the branch node at zero extra memory cost.
+An unchanged branch measures exactly zero (bit-identical twins); a nudged
+one draws sensitive dependence on initial conditions, live. The series
+exists only over the abandoned span, is streamed as `div` in telemetry,
+fetched whole via `divergence`, and **stays out of run files** (it is
+derived data; replay regenerates it).
+
 ## Clients
 
 Every interface is a client of this contract, owning its own presentation:
@@ -207,13 +224,24 @@ Every interface is a client of this contract, owning its own presentation:
 - `remote.html` — phone-shaped panel, sliders-first.
 - `tablet.html` — the instrument: slider + numeric entry per live parameter,
   a visually distinct setup form (numbers define a *start*, and nothing
-  happens until Apply), capture/branch/claims, run files, and **ensembles** —
-  same setup numbers across K deterministically-derived seeds, F frames each,
-  order parameters tabulated with mean ± σ. The ensemble is pure client-side
-  orchestration of `setup` + `goto` + telemetry; the model needed nothing new.
+  happens until Apply), capture/branch/claims, run files, the divergence
+  chart, lessons, and **ensembles** — same setup numbers across K
+  deterministically-derived seeds, F frames each, order parameters tabulated
+  with mean ± σ. Ensembles and lessons are pure client-side orchestration;
+  the model needed nothing new for either.
+- **Observer mode** — `?observe` on any client makes it read-only: it sends
+  nothing but `hello`/`describe` (and `divergence`), and follows the model's
+  echoes perfectly. Students' phones watch the instructor's moves live. This
+  is a courtesy flag, not security — anyone can drop it.
 
-## Still open (milestone 4+)
+### Lesson files (client-side convention)
 
-Lesson sequences (an ordered list of setups/segments advanced one tap at a
-time), observer/read-only remotes, QR-code pairing, and divergence curves
-between branches.
+`{format:'boids-lesson', formatVersion:1, steps:[{title, note, setup?, run?}]}`
+— an ordered list of starts with talking points, advanced one tap at a time
+from the tablet. A step with `setup` applies it (paused unless `run`); a step
+without is a talking point. The model knows nothing about lessons.
+
+## Still open (milestone 5+)
+
+Embedding run files inside lesson steps, side-by-side branch playback on a
+second model window, and log-scale divergence for reading the exponent.

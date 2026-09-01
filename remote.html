@@ -68,6 +68,7 @@ button.wide{flex:1}
 #setup h2{color:var(--accent)}
 .note{font-size:11px;color:var(--dim);line-height:1.5;margin:9px 0 0}
 #frame{font-size:13px}
+body.obs .card button,body.obs .card input{pointer-events:none;opacity:.5}
 </style>
 </head>
 <body>
@@ -211,7 +212,12 @@ if (!transports.length){
   document.getElementById('connText').textContent = 'no transport: browser lacks BroadcastChannel and no ?room= given';
   return;
 }
+// ?observe — read-only client: watches every echo and telemetry, sends
+// nothing but hello. Students' phones follow the instructor's tablet.
+var OBSERVE = /[?&]observe\b/.test(location.search);
+if (OBSERVE) document.body.classList.add('obs');
 function send(m){
+  if (OBSERVE && m.t !== 'hello' && m.t !== 'describe') return;
   m.proto = PROTO; m.from = 'remote';
   for (var ti = 0; ti < transports.length; ti++) transports[ti](m);
 }
@@ -336,7 +342,8 @@ var connTimer = null, isConnected = false;
 function connected(ver){
   isConnected = true;
   $('conn').classList.add('ok');
-  $('connText').textContent = 'model v' + ver.model + ' · protocol v' + ver.proto;
+  $('connText').textContent = 'model v' + ver.model + ' · protocol v' + ver.proto +
+    (OBSERVE ? ' · observer' : '');
   if (connTimer){ clearInterval(connTimer); connTimer = null; }
 }
 

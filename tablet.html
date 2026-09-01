@@ -84,6 +84,8 @@ td:first-child,th:first-child{text-align:left}
 tr.sum td{color:var(--fg);border-bottom:none}
 #claims{display:flex;flex-direction:column;gap:5px;margin-top:9px;font-size:12px;color:var(--dim)}
 #claims button{text-align:left;padding:6px 10px}
+#lsteps{display:flex;flex-direction:column;gap:5px;margin-top:9px;font-size:12px;color:var(--dim)}
+body.obs .card button,body.obs .card input{pointer-events:none;opacity:.5}
 </style>
 </head>
 <body>
@@ -156,6 +158,12 @@ tr.sum td{color:var(--fg);border-bottom:none}
       </div>
       <p class="note">polarization ≈ 1: travelling as one flock. rotation high: milling. Both near 0: a swarm.</p>
     </div>
+    <div class="card">
+      <h2>Divergence</h2>
+      <canvas id="divcv" width="560" height="90" style="width:100%;height:90px;border-radius:8px"></canvas>
+      <div class="stats" style="margin-top:7px"><span>now <b id="o-div">—</b></span><span id="divinfo"></span></div>
+      <p class="note">Mean distance between corresponding birds on this branch and the timeline it abandoned. Flat at zero: identical twins. Rising: sensitive dependence — the butterfly, measured.</p>
+    </div>
   </div>
 
   <div class="col">
@@ -169,6 +177,29 @@ tr.sum td{color:var(--fg);border-bottom:none}
         <button id="b-applyrun" class="wide">Apply &amp; run</button>
       </div>
       <p class="note">Presets fill this form; nothing happens until Apply. Setup is the <b>only reproducible moment</b>: same numbers, same flock, every time.</p>
+    </div>
+    <div class="card">
+      <h2>Lesson</h2>
+      <div id="lstep" class="note" style="font-size:13px;color:var(--fg);margin:0 0 10px">no lesson loaded — add steps or load a file</div>
+      <div class="btns" style="margin-bottom:10px">
+        <button id="b-lprev">◀ Prev</button>
+        <button id="b-lnext" class="wide">Next ▶</button>
+      </div>
+      <div class="grid2" style="margin-bottom:9px">
+        <input type="text" id="f-ltitle" placeholder="step title…" aria-label="Step title">
+        <input type="text" id="f-lnote" placeholder="step note…" aria-label="Step note">
+      </div>
+      <div class="btns">
+        <button id="b-ladd" class="wide">Add step (setup form)</button>
+        <button id="b-laddnote">Note only</button>
+      </div>
+      <div id="lsteps"></div>
+      <div class="btns" style="margin-top:9px">
+        <button id="b-lexport" class="wide">Export lesson</button>
+        <button id="b-lload" class="wide">Load…</button>
+      </div>
+      <input type="file" id="f-lfile" accept=".json,application/json" style="display:none">
+      <p class="note">A lesson is an ordered list of starts with talking points, advanced one tap at a time. Steps apply <b>paused</b> — press Go when the room is ready.</p>
     </div>
     <div class="card">
       <h2>Run file</h2>
@@ -232,7 +263,11 @@ if (!transports.length){
   document.getElementById('connText').textContent = 'no transport: browser lacks BroadcastChannel and no ?room= given';
   return;
 }
+// ?observe — read-only: watch every echo, send nothing but reads
+var OBSERVE = /[?&]observe\b/.test(location.search);
+if (OBSERVE) document.body.classList.add('obs');
 function send(m){
+  if (OBSERVE && m.t !== 'hello' && m.t !== 'describe' && m.t !== 'divergence') return;
   m.proto = PROTO; m.from = 'remote';
   for (var ti = 0; ti < transports.length; ti++) transports[ti](m);
 }
@@ -384,7 +419,7 @@ function reflectAll(msg){
   isConnected = true;
   $('conn').classList.add('ok');
   $('connText').textContent = 'model v' + msg.version.model + ' · protocol v' + msg.version.proto +
-    (roomMatch ? ' · room ' + roomMatch[1] : '');
+    (roomMatch ? ' · room ' + roomMatch[1] : '') + (OBSERVE ? ' · observer' : '');
 }
 
 var isConnected = false;
@@ -398,7 +433,9 @@ function dispatch(m){
     values = m.values;
     ['sep','ali','coh','vis','spd','fade','crowd','stops','hash','pointer','rate'].forEach(function(k){ reflect(k, values[k]); });
     reflectClock(m.clock);
+    divSeries = []; drawDiv();
   }
+  else if (m.t === 'divSeries'){ divSeries = m.series || []; drawDiv(); }
   else if (m.t === 'tree') reflectTree(m.tree);
   else if (m.t === 'telemetry'){
     if (m.running) $('frame').textContent = m.frame;
@@ -409,6 +446,11 @@ function dispatch(m){
     $('o-nb').textContent = m.meanNb;
     $('o-pol').textContent = m.pol;
     $('o-rot').textContent = m.rot;
+    $('o-div').textContent = m.div == null ? '—' : m.div;
+    if (m.div != null && Date.now() - lastDivReq > 1000){
+      lastDivReq = Date.now();
+      send({t:'divergence'});
+    }
   }
   else if (m.t === 'runFile'){
     var blob = new Blob([JSON.stringify(m.file)], {type:'application/json'});
@@ -477,6 +519,119 @@ $('f-load').addEventListener('change', function(){
 $('b-goto').addEventListener('click', function(){
   var v = parseInt($('f-goto').value, 10);
   if (!isNaN(v)) send({t:'do', cmd:'goto', frame:v});
+});
+
+// ---- divergence chart -----------------------------------------------------
+var divSeries = [], lastDivReq = 0;
+function drawDiv(){
+  var cv = $('divcv'), c = cv.getContext('2d');
+  c.fillStyle = '#1C1916'; c.fillRect(0, 0, cv.width, cv.height);
+  if (divSeries.length < 2){
+    $('divinfo').textContent = 'branch, then play — the curve grows against the abandoned timeline';
+    return;
+  }
+  var x0 = divSeries[0][0], x1 = divSeries[divSeries.length - 1][0], ymax = 0;
+  for (var i = 0; i < divSeries.length; i++) if (divSeries[i][1] > ymax) ymax = divSeries[i][1];
+  if (!ymax) ymax = 1;
+  c.strokeStyle = '#E08A4C'; c.lineWidth = 2; c.beginPath();
+  for (i = 0; i < divSeries.length; i++){
+    var X = (divSeries[i][0] - x0) / Math.max(1, x1 - x0) * (cv.width - 10) + 5;
+    var Y = cv.height - 5 - (divSeries[i][1] / ymax) * (cv.height - 10);
+    if (i) c.lineTo(X, Y); else c.moveTo(X, Y);
+  }
+  c.stroke();
+  $('divinfo').textContent = 'f' + x0 + '–' + x1 + ' · max ' + ymax;
+}
+
+// ---- lesson: an ordered list of starts with talking points ----------------
+// Pure client-side orchestration — the model knows nothing about lessons.
+// Steps apply paused; the instructor presses Go when the room is ready.
+var lesson = {steps:[]}, lcur = -1;
+function esc(s){
+  return String(s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+  });
+}
+function renderLessonList(){
+  var host = $('lsteps'); host.innerHTML = '';
+  lesson.steps.forEach(function(st, i){
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:5px;align-items:center';
+    var b = document.createElement('button');
+    b.style.cssText = 'flex:1;text-align:left';
+    if (i === lcur) b.classList.add('on');
+    b.textContent = (i + 1) + '. ' + (st.title || (st.setup ? 'setup' : 'note'));
+    b.addEventListener('click', function(){ applyLessonStep(i); });
+    var up = document.createElement('button');
+    up.textContent = '▲'; up.title = 'Move up';
+    up.addEventListener('click', function(){
+      if (i === 0) return;
+      var t = lesson.steps[i - 1]; lesson.steps[i - 1] = lesson.steps[i]; lesson.steps[i] = t;
+      if (lcur === i) lcur = i - 1; else if (lcur === i - 1) lcur = i;
+      renderLessonList();
+    });
+    var del = document.createElement('button');
+    del.textContent = '✕'; del.title = 'Remove';
+    del.addEventListener('click', function(){
+      lesson.steps.splice(i, 1);
+      if (lcur >= lesson.steps.length) lcur = lesson.steps.length - 1;
+      renderLessonList();
+    });
+    row.appendChild(b); row.appendChild(up); row.appendChild(del);
+    host.appendChild(row);
+  });
+}
+function applyLessonStep(i){
+  if (i < 0 || i >= lesson.steps.length) return;
+  lcur = i;
+  var st = lesson.steps[i];
+  $('lstep').innerHTML = '<b>' + (i + 1) + '/' + lesson.steps.length + ' — ' +
+    esc(st.title || 'untitled') + '</b>' + (st.note ? '<br>' + esc(st.note) : '');
+  if (st.setup){
+    fillSetupForm(st.setup); setupTouched = true;
+    var p = {}; for (var k in st.setup) p[k] = st.setup[k];
+    p.run = !!st.run;
+    send({t:'setup', profile:p});
+  }
+  renderLessonList();
+}
+$('b-lprev').addEventListener('click', function(){ applyLessonStep(lcur - 1); });
+$('b-lnext').addEventListener('click', function(){ applyLessonStep(lcur + 1); });
+$('b-ladd').addEventListener('click', function(){
+  lesson.steps.push({title:$('f-ltitle').value, note:$('f-lnote').value, setup:collectSetupForm()});
+  $('f-ltitle').value = ''; $('f-lnote').value = '';
+  renderLessonList();
+});
+$('b-laddnote').addEventListener('click', function(){
+  lesson.steps.push({title:$('f-ltitle').value, note:$('f-lnote').value});
+  $('f-ltitle').value = ''; $('f-lnote').value = '';
+  renderLessonList();
+});
+$('b-lexport').addEventListener('click', function(){
+  var file = {format:'boids-lesson', formatVersion:1, steps:lesson.steps};
+  var blob = new Blob([JSON.stringify(file, null, 1)], {type:'application/json'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'boids-lesson-' + lesson.steps.length + 'steps.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+});
+$('b-lload').addEventListener('click', function(){ $('f-lfile').click(); });
+$('f-lfile').addEventListener('change', function(){
+  var f = this.files && this.files[0];
+  this.value = '';
+  if (!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try {
+      var file = JSON.parse(r.result);
+      if (file.format !== 'boids-lesson' || !Array.isArray(file.steps)) throw new Error('bad');
+      lesson = {steps:file.steps}; lcur = -1;
+      $('lstep').textContent = file.steps.length + ' steps loaded — Next to begin';
+      renderLessonList();
+    } catch (e){ $('connText').textContent = 'not a valid lesson file'; }
+  };
+  r.readAsText(f);
 });
 
 // ---- ensemble -------------------------------------------------------------

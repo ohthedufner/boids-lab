@@ -15,7 +15,7 @@ button just produces uglier URLs from `file://`).
 
 then open http://localhost:8013/
 
-## The instrument (v2, milestones 1–3)
+## The instrument (v2, milestones 1–4)
 
 A second version for study: the model with **no control panel**, driven
 entirely through a published API. `model.html` is the display — it boots
@@ -49,7 +49,16 @@ dependencies:
 
 then open the URLs it prints: `model.html?room=class` on the display,
 `tablet.html?room=class` on the tablet. `model.html?room` (no value)
-generates a room code and shows the tablet URL in the corner.
+generates a room code and shows the tablet URL — text and QR code — in
+the corner whenever the model is paused.
+
+Milestone 4 adds the classroom layer: **lessons** (an ordered list of
+starts with talking points, built and advanced from the tablet, saved as a
+file), **observer mode** (`?observe` makes any client read-only — student
+phones follow the instructor's moves live), and the **divergence curve** —
+branch, nudge one number, and watch the mean distance between the two
+timelines' corresponding birds rise: the butterfly effect, measured. An
+unchanged branch reads exactly zero.
 
 The contract between all pages is `docs/instrument-protocol.md`; the design
 reasoning is `docs/instrumenting-the-flock.md`. The toy (`index.html`) is

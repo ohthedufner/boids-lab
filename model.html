@@ -25,6 +25,10 @@ body{background:var(--bg);color:var(--fg);overflow:hidden;
   background:rgba(28,25,22,.6);padding:3px 9px;border-radius:8px;
   pointer-events:none;user-select:none;display:none;
 }
+#qr{
+  position:fixed;left:12px;bottom:36px;z-index:5;border-radius:5px;
+  image-rendering:pixelated;pointer-events:none;user-select:none;display:none;
+}
 </style>
 </head>
 <body>
@@ -32,6 +36,7 @@ body{background:var(--bg);color:var(--fg);overflow:hidden;
 <canvas id="cv"></canvas>
 <div id="status">paused · frame 0</div>
 <div id="room"></div>
+<canvas id="qr" width="1" height="1"></canvas>
 
 <script>
 (function(){
@@ -200,6 +205,21 @@ function bufPush(){
          vx:new Float32Array(N), vy:new Float32Array(N), nb:new Float32Array(N)};
     bufSlots[idx] = s;
   }
+  if (s.f === frame && tree && activeNode().parent !== null){
+    // The slot still holds this exact frame from the timeline we branched
+    // away from. Measure the twins before overwriting: mean distance between
+    // corresponding birds is the divergence curve — the butterfly, live.
+    var dsum = 0, dhw = FW * 0.5, dhh = FH * 0.5;
+    for (var di = 0; di < N; di++){
+      var ddx = px[di] - s.px[di];
+      if (ddx > dhw) ddx -= FW; else if (ddx < -dhw) ddx += FW;
+      var ddy = py[di] - s.py[di];
+      if (ddy > dhh) ddy -= FH; else if (ddy < -dhh) ddy += FH;
+      dsum += Math.sqrt(ddx * ddx + ddy * ddy);
+    }
+    var an = activeNode();
+    (an.div || (an.div = [])).push([frame, +(dsum / N).toFixed(4)]);
+  }
   s.f = frame;
   s.px.set(px); s.py.set(py); s.vx.set(vx); s.vy.set(vy); s.nb.set(nb);
   bufLast = frame;
@@ -312,7 +332,13 @@ function buildRunFile(){
     state0:{enc:'f32le-b64', n:tree.state0.px.length,
       px:b64FromF32(tree.state0.px), py:b64FromF32(tree.state0.py),
       vx:b64FromF32(tree.state0.vx), vy:b64FromF32(tree.state0.vy)},
-    nodes:tree.nodes, active:tree.active,
+    // div (divergence series) is derived data and stays out of the file —
+    // it keeps run files small, and replay can regenerate it
+    nodes:tree.nodes.map(function(n){
+      return {id:n.id, parent:n.parent, startFrame:n.startFrame,
+              startParams:n.startParams, changes:n.changes, endFrame:n.endFrame};
+    }),
+    active:tree.active,
     claims:tree.claims, tainted:tree.tainted
   };
 }
@@ -513,6 +539,7 @@ function setRunning(r){
   if (r) replayTarget = -1;
   statusEl.classList.toggle('run', running);
   updateStatus();
+  updateQR();
   sendClock();
 }
 function stepOnce(){
@@ -611,6 +638,147 @@ function setStops(arr){
   return true;
 }
 
+// ---- QR pairing -----------------------------------------------------------
+// Minimal QR encoder: byte mode, ECC level L, fixed mask 0, versions 1-5
+// (up to 106 bytes — plenty for a LAN pairing URL). Zero dependencies,
+// verified by decode round-trip in the test suite.
+var QR_CAP  = [17, 32, 53, 78, 106];
+var QR_DATA = [19, 34, 55, 80, 108];
+var QR_ECC  = [7, 10, 15, 20, 26];
+var GEXP = [], GLOG = [];
+(function(){
+  var x = 1;
+  for (var i = 0; i < 255; i++){ GEXP[i] = x; GLOG[x] = i; x <<= 1; if (x & 256) x ^= 285; }
+  for (var j = 255; j < 510; j++) GEXP[j] = GEXP[j - 255];
+})();
+function qrEcc(data, n){
+  var gen = [1];
+  for (var i = 0; i < n; i++){
+    var ng = new Array(gen.length + 1);
+    for (var a = 0; a < ng.length; a++) ng[a] = 0;
+    for (var j = 0; j < gen.length; j++){
+      ng[j] ^= gen[j];
+      if (gen[j] !== 0) ng[j + 1] ^= GEXP[(GLOG[gen[j]] + i) % 255];
+    }
+    gen = ng;
+  }
+  var res = data.slice();
+  for (var k = 0; k < n; k++) res.push(0);
+  for (var p = 0; p < data.length; p++){
+    var c = res[p];
+    if (c === 0) continue;
+    var l = GLOG[c];
+    for (var q = 0; q < gen.length; q++)
+      if (gen[q] !== 0) res[p + q] ^= GEXP[(l + GLOG[gen[q]]) % 255];
+  }
+  return res.slice(data.length);
+}
+function qrMatrix(text){
+  var bytes = [], i, b;
+  for (i = 0; i < text.length; i++){
+    var ch = text.charCodeAt(i);
+    if (ch < 128) bytes.push(ch);
+    else if (ch < 2048) bytes.push(192 | ch >> 6, 128 | ch & 63);
+    else bytes.push(224 | ch >> 12, 128 | (ch >> 6) & 63, 128 | ch & 63);
+  }
+  var v = 0;
+  while (v < 5 && QR_CAP[v] < bytes.length) v++;
+  if (v >= 5 && QR_CAP[4] < bytes.length) return null;
+  var ver = v + 1, size = 17 + 4 * ver, nd = QR_DATA[v];
+  var bits = [];
+  function put(val, n){ for (var t = n - 1; t >= 0; t--) bits.push((val >> t) & 1); }
+  put(4, 4); put(bytes.length, 8);
+  for (i = 0; i < bytes.length; i++) put(bytes[i], 8);
+  put(0, Math.min(4, nd * 8 - bits.length));
+  while (bits.length % 8) bits.push(0);
+  var cw = [];
+  for (i = 0; i < bits.length; i += 8){
+    var by = 0;
+    for (b = 0; b < 8; b++) by = (by << 1) | bits[i + b];
+    cw.push(by);
+  }
+  var pads = [236, 17], pi = 0;
+  while (cw.length < nd) cw.push(pads[pi++ & 1]);
+  var all = cw.concat(qrEcc(cw, QR_ECC[v]));
+
+  var M = [], F = [];
+  for (i = 0; i < size; i++){
+    M.push(new Array(size)); F.push(new Array(size));
+    for (b = 0; b < size; b++){ M[i][b] = 0; F[i][b] = false; }
+  }
+  function setF(r, c, val){ M[r][c] = val; F[r][c] = true; }
+  function finder(r, c){
+    for (var dr = -1; dr <= 7; dr++) for (var dc = -1; dc <= 7; dc++){
+      var rr = r + dr, cc = c + dc;
+      if (rr < 0 || cc < 0 || rr >= size || cc >= size) continue;
+      var on = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6 &&
+               (dr === 0 || dr === 6 || dc === 0 || dc === 6 ||
+                (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+      setF(rr, cc, on ? 1 : 0);
+    }
+  }
+  finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+  for (i = 8; i < size - 8; i++){ setF(6, i, i % 2 === 0 ? 1 : 0); setF(i, 6, i % 2 === 0 ? 1 : 0); }
+  if (ver >= 2){
+    var ac = size - 7;
+    for (var dr2 = -2; dr2 <= 2; dr2++) for (var dc2 = -2; dc2 <= 2; dc2++)
+      setF(ac + dr2, ac + dc2, Math.max(Math.abs(dr2), Math.abs(dc2)) !== 1 ? 1 : 0);
+  }
+  setF(size - 8, 8, 1);   // dark module
+  for (i = 0; i < 9; i++){ if (!F[8][i]) setF(8, i, 0); if (!F[i][8]) setF(i, 8, 0); }
+  for (i = 0; i < 8; i++){ if (!F[8][size - 1 - i]) setF(8, size - 1 - i, 0); if (!F[size - 1 - i][8]) setF(size - 1 - i, 8, 0); }
+
+  var bi = 0, total = all.length * 8;
+  function bitAt(k){ return (all[k >> 3] >> (7 - (k & 7))) & 1; }
+  var col = size - 1, up = true;
+  while (col > 0){
+    if (col === 6) col--;
+    for (var s2 = 0; s2 < size; s2++){
+      var row = up ? size - 1 - s2 : s2;
+      for (var cc2 = 0; cc2 < 2; cc2++){
+        var c3 = col - cc2;
+        if (F[row][c3]) continue;
+        var bv = bi < total ? bitAt(bi) : 0;
+        bi++;
+        if (((row + c3) & 1) === 0) bv ^= 1;   // mask 0
+        M[row][c3] = bv;
+      }
+    }
+    up = !up; col -= 2;
+  }
+  var fmt = 0x77C4;   // format info for ECC L, mask 0 (BCH-protected constant)
+  for (i = 0; i < 15; i++){
+    var fb = (fmt >> i) & 1;
+    if (i < 6) M[i][8] = fb;
+    else if (i < 8) M[i + 1][8] = fb;
+    else M[size - 15 + i][8] = fb;
+    if (i < 8) M[8][size - 1 - i] = fb;
+    else if (i < 9) M[8][15 - i] = fb;
+    else M[8][14 - i] = fb;
+  }
+  return M;
+}
+window.__qrMatrix = qrMatrix;   // exposed for the decode-round-trip test
+
+var qrShown = false;
+function drawQR(text){
+  var q = document.getElementById('qr');
+  var M = qrMatrix(text);
+  if (!M){ qrShown = false; return; }
+  var n = M.length, sc = 3, mar = 4 * sc;
+  q.width = n * sc + mar * 2; q.height = q.width;
+  var qc = q.getContext('2d');
+  qc.fillStyle = '#FFFFFF'; qc.fillRect(0, 0, q.width, q.height);
+  qc.fillStyle = '#000000';
+  for (var r = 0; r < n; r++)
+    for (var c = 0; c < n; c++)
+      if (M[r][c]) qc.fillRect(mar + c * sc, mar + r * sc, sc, sc);
+}
+function updateQR(){
+  var q = document.getElementById('qr');
+  if (q) q.style.display = (qrShown && !running) ? 'block' : 'none';
+}
+
 // ---- transports -----------------------------------------------------------
 // Messages are transport-agnostic; the model serves every transport at once.
 // BroadcastChannel reaches remotes in this browser; a WebSocket room
@@ -651,9 +819,13 @@ if (roomMatch){
     openWS();
   })();
   var roomEl = document.getElementById('room');
-  roomEl.style.display = 'block';
-  roomEl.textContent = 'room ' + room + ' · tablet: ' + location.origin +
+  var tabletURL = location.origin +
     location.pathname.replace(/[^\/]*$/, 'tablet.html') + '?room=' + room;
+  roomEl.style.display = 'block';
+  roomEl.textContent = 'room ' + room + ' · tablet: ' + tabletURL;
+  qrShown = true;
+  drawQR(tabletURL);   // scan to pair; visible whenever the model is paused
+  updateQR();
 }
 
 function send(m){
@@ -793,14 +965,21 @@ function dispatch(m){
       if (tree) send({t:'runFile', file:buildRunFile()});
     }
     else if (m.t === 'load') applyLoad(m.file);
+    else if (m.t === 'divergence'){
+      var dn = tree ? activeNode() : null;
+      send({t:'divSeries', node:tree ? tree.active : 0, series:(dn && dn.div) || []});
+    }
 }
 
 if (transports.length){
   setInterval(function(){
     var o = orderParams();
+    var an = tree ? activeNode() : null;
+    var dv = an && an.div && an.div.length ? an.div[an.div.length - 1][1] : null;
     send({t:'telemetry', frame:viewFrame, running:running, fps:running?fps:0,
           stepMs:+lastMs.toFixed(2), checks:checks,
-          meanNb:+o.meanNb.toFixed(2), pol:+o.pol.toFixed(3), rot:+o.rot.toFixed(3)});
+          meanNb:+o.meanNb.toFixed(2), pol:+o.pol.toFixed(3), rot:+o.rot.toFixed(3),
+          div:dv});
   }, 250);
 }
 
