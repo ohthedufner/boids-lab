@@ -1,7 +1,7 @@
 # Boids Lab
 
-One flock, one file. This is the boids toy from dufner-dev-web, isolated so it
-can be explored and re-coloured on its own. Craig Reynolds' three rules
+One flock, one file. This is the boids toy from a larger multi-page exhibit,
+isolated so it can be explored and re-coloured on its own. Craig Reynolds' three rules
 (separation, alignment, cohesion), seven sliders, five presets, a spatial-hash
 toggle with a live cost counter, and a permalink that encodes the whole state.
 
@@ -10,7 +10,7 @@ toggle with a live cost counter, and a permalink that encodes the whole state.
 Any static server works; double-clicking `index.html` also works (the Copy-link
 button just produces uglier URLs from `file://`).
 
-    cd C:\Users\mreri\Projects\boids-lab
+    cd boids-lab
     python -m http.server 8013
 
 then open http://localhost:8013/

@@ -17,10 +17,11 @@ tablet rather than a phone — so the interface has room for direct numeric entr
 setting start values before the model begins, and reading numbers off a running
 flock.
 
-That version assumes an architecture settled the same day in the ArtWall project:
-**an effect is a display model that publishes an API**, and every interface is a
-client of that contract. The control panel does not live inside the model. See
-`ArtWall/docs/architecture.md` for the argument; this document only assumes it.
+That version assumes an architecture settled the same day in a companion
+project: **an effect is a display model that publishes an API**, and every
+interface is a client of that contract. The control panel does not live inside
+the model. The argument was made in that project's architecture notes; this
+document only assumes it.
 
 **The toy and the instrument are two products sharing one model.** The ambient
 wall version stays frozen and plays. The instrument grows. Neither drags the other

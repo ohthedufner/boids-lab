@@ -334,8 +334,8 @@ gesture, not the experiment. The invitation is honest; the proof isn't ours.
 
 ## Part 4 — The other variations: the background family
 
-Separate from the five presets, the **parent project** (`dufner-dev-web` — this
-lab is the flock extracted from it) holds four background variants of the same
+Separate from the five presets, the **parent project** (the multi-page exhibit
+this lab's flock was extracted from) holds four background variants of the same
 engine. They are not in this repo, but they belong in the family record. Two of
 them are behaviours rather than tunings, and neither has a research ancestor —
 they're ours.
@@ -410,7 +410,7 @@ full-screen on a TV, with `?remote=1` hiding the panel and the cursor. Every
 flocking demo in the literature is a single-surface artifact, so **splitting the
 controls from the display, across devices** is a genuinely new affordance for
 this material — it's the one that turns a demo into an exhibit with a docent.
-But it belongs to the multi-page exhibit (`dufner-dev-web`); this lab
+But it belongs to the multi-page exhibit; this lab
 deliberately stripped that plumbing, so it's recorded here for the family
 history, not claimed as a feature of this page.
 

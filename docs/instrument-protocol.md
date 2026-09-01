@@ -1,9 +1,10 @@
 # The instrument protocol — v1
 
 The contract between the boids model (`model.html`) and any interface that
-drives it (`remote.html` is the first). Per the architecture decision inherited
-from ArtWall: **the model publishes an API and owns all state; every interface
-is a client and owns none.** What gets frozen is this contract, not markup.
+drives it (`remote.html` is the first). Per an architecture decision inherited
+from a companion project: **the model publishes an API and owns all state;
+every interface is a client and owns none.** What gets frozen is this
+contract, not markup.
 
 Status: milestones 1–4. The contract covers setup, live control, the clock,
 telemetry, the capture buffer (scrub / branch), run files (export / load /
