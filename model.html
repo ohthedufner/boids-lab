@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Boids Model — display</title>
+<meta name="description" content="The boids flocking model as a pure display. No controls here; every interface is a client of its API.">
+<style>
+:root{ --bg:#12100E; --fg:#EDE6DA; --dim:#9C9184; }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overscroll-behavior:none}
+body{background:var(--bg);color:var(--fg);overflow:hidden;
+  font:12px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#cv{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#status{
+  position:fixed;right:12px;bottom:10px;z-index:5;color:var(--dim);
+  font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:.3px;
+  background:rgba(28,25,22,.6);padding:3px 9px;border-radius:8px;
+  pointer-events:none;user-select:none;
+}
+#status.run{display:none}
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+<div id="status">paused · frame 0</div>
+
+<script>
+(function(){
+"use strict";
+
+// ============================================================================
+// Boids Model — the display half of the instrument.
+//
+// This page carries NO control panel. It publishes an API over a
+// BroadcastChannel ('boids-lab') and every interface — phone, tablet,
+// console — is a client of that contract. See docs/instrument-protocol.md.
+//
+// Forked consciously from index.html (the frozen toy). Do not sync back.
+//
+// Key differences from the toy:
+//  - Logical field: positions live in a fixed 1080-unit-tall field whose
+//    width is aspect*1080. The screen letterboxes. Same run file, same
+//    flock, on every display.
+//  - Deterministic setup: setup() resets the RNG seed before placing birds,
+//    so the same profile reproduces the same flock.
+//  - The frame is the clock: absolute frame counter, pause / single-step /
+//    rate control. Wall time is an accident of the machine.
+//  - Pointer influence is a parameter, OFF by default (an unlogged mouse
+//    pass would make a run unreproducible).
+// ============================================================================
+
+var PROTO = 1;        // protocol version
+var MODEL_VER = 1;    // bump whenever step()'s arithmetic or constants change
+var LOG_H = 1080;     // logical field height; width = aspect * LOG_H
+
+// ---- parameter spec — the contract's source of truth ----------------------
+// kind: setup      — takes effect only via setup() (a restart)
+//       behavioral — live, irreversible (changes the flock's future)
+//       display    — live, freely reversible (the model never sees it)
+//       engine     — live; no *intended* effect on behaviour, but hash
+//                    changes float summation order, so it is recorded anyway
+//       clock      — live; how fast simulated time passes
+var SPEC = {
+  seed:   {kind:'setup',      label:'Seed',       min:1,    max:2147483647, step:1, integer:true},
+  cnt:    {kind:'setup',      label:'Flock size', min:50,   max:4000, step:50, integer:true},
+  aspect: {kind:'setup',      label:'Aspect',     min:0.5,  max:4,    step:0.01},
+  sep:    {kind:'behavioral', label:'Separation', min:0,    max:3,    step:0.05},
+  ali:    {kind:'behavioral', label:'Alignment',  min:0,    max:3,    step:0.05},
+  coh:    {kind:'behavioral', label:'Cohesion',   min:0,    max:3,    step:0.05},
+  vis:    {kind:'behavioral', label:'Vision',     min:14,   max:130,  step:1},
+  spd:    {kind:'behavioral', label:'Speed',      min:0.4,  max:7,    step:0.05},
+  pointer:{kind:'behavioral', label:'Pointer',    min:0,    max:1,    step:1, integer:true},
+  fade:   {kind:'display',    label:'Trails',     min:0.02, max:1,    step:0.01},
+  crowd:  {kind:'display',    label:'Crowd',      min:1,    max:20,   step:1, integer:true},
+  stops:  {kind:'display',    label:'Ramp',       colors:true},
+  hash:   {kind:'engine',     label:'Spatial hash', min:0,  max:1,    step:1, integer:true},
+  rate:   {kind:'clock',      label:'Clock rate', min:0.25, max:8,    step:0.25}
+};
+
+var PRESETS = {
+  flock:  {sep:1.6, ali:1.0,  coh:0.9, vis:52,  spd:2.6, cnt:500,  fade:0.16},
+  swarm:  {sep:0.7, ali:0.35, coh:2.2, vis:78,  spd:2.0, cnt:900,  fade:0.10},
+  school: {sep:2.1, ali:2.4,  coh:1.1, vis:44,  spd:4.3, cnt:700,  fade:0.30},
+  gnats:  {sep:2.6, ali:0.0,  coh:0.5, vis:30,  spd:1.5, cnt:400,  fade:0.45},
+  crystal:{sep:3.0, ali:2.9,  coh:0.15,vis:26,  spd:0.9, cnt:1400, fade:0.06}
+};
+
+// live parameter values
+var P = {sep:1.6, ali:1.0, coh:0.9, vis:52, spd:2.6, fade:0.16,
+         crowd:7, hash:1, pointer:0, rate:1};
+var seed0 = 1234567;      // the setup seed (immutable between setups)
+var aspect = 16/9;
+var STOPS = ['#3D63D8', '#2FB6A8', '#EFC94C', '#FF5C38'];
+
+// ---- colour ---------------------------------------------------------------
+var LUT = buildLUT(STOPS, 64);
+function buildLUT(stops, n){
+  var out = new Array(n), segs = stops.length - 1;
+  function hex(c){ return [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)]; }
+  for (var i = 0; i < n; i++){
+    var t = i / (n - 1) * segs, sg = Math.min(segs - 1, t | 0), f = t - sg;
+    var a = hex(stops[sg]), b = hex(stops[sg + 1]);
+    out[i] = 'rgb(' + (a[0] + (b[0]-a[0]) * f | 0) + ',' + (a[1] + (b[1]-a[1]) * f | 0) + ',' + (a[2] + (b[2]-a[2]) * f | 0) + ')';
+  }
+  return out;
+}
+
+// ---- state ----------------------------------------------------------------
+var cv = document.getElementById('cv'), ctx = cv.getContext('2d', {alpha:false});
+var statusEl = document.getElementById('status');
+var W = 0, H = 0, DPR = 1;
+var FW = Math.round(LOG_H * aspect), FH = LOG_H;   // logical field
+var S = 1, OX = 0, OY = 0;                         // letterbox transform
+var px, py, vx, vy, nb, N = 0;
+var mx = -1e5, my = -1e5, checks = 0;              // pointer, logical coords
+var frame = 0, running = false, acc = 0;
+var needsDraw = true;
+var seed = 1;
+
+// 32-bit xorshift. The seed must never be 0 (the generator would stick).
+function setSeed(s){ seed = s | 0; if (seed === 0) seed = 1; }
+function rnd(){ seed ^= seed << 13; seed ^= seed >>> 7; seed ^= seed << 17; return ((seed >>> 8) & 0xFFFFFF) / 0x1000000; }
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.max(1, Math.round(W * DPR));
+  cv.height = Math.max(1, Math.round(H * DPR));
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  S = Math.min(W / FW, H / FH);
+  OX = (W - FW * S) / 2; OY = (H - FH * S) / 2;
+  ctx.fillStyle = '#12100E'; ctx.fillRect(0, 0, W, H);
+  needsDraw = true;
+}
+
+function init(n){
+  N = n;
+  px = new Float32Array(n); py = new Float32Array(n);
+  vx = new Float32Array(n); vy = new Float32Array(n); nb = new Float32Array(n);
+  for (var i = 0; i < n; i++){
+    px[i] = rnd() * FW; py[i] = rnd() * FH;
+    // NOTE: Math.cos/sin may differ by 1 ulp across JS engines, so a seed
+    // alone is not a cross-machine guarantee. Run files (milestone 2) store
+    // explicit initial state for exactly this reason.
+    var a = rnd() * 6.2831853;
+    vx[i] = Math.cos(a) * P.spd; vy[i] = Math.sin(a) * P.spd;
+  }
+}
+
+// ---- spatial hash ---------------------------------------------------------
+var gCols = 0, gRows = 0, gHead = null, gNext = null;
+
+function rebuildGrid(vis){
+  var cell = Math.max(vis, 1);
+  gCols = Math.max(1, Math.floor(FW / cell));
+  gRows = Math.max(1, Math.floor(FH / cell));
+  var nc = gCols * gRows;
+  if (!gHead || gHead.length !== nc) gHead = new Int32Array(nc);
+  if (!gNext || gNext.length !== N) gNext = new Int32Array(N);
+  gHead.fill(-1);
+  var cw = FW / gCols, ch = FH / gRows;
+  for (var i = 0; i < N; i++){
+    var cx = px[i] / cw | 0; if (cx < 0) cx = 0; else if (cx >= gCols) cx = gCols - 1;
+    var cy = py[i] / ch | 0; if (cy < 0) cy = 0; else if (cy >= gRows) cy = gRows - 1;
+    var c = cy * gCols + cx;
+    gNext[i] = gHead[c]; gHead[c] = i;
+  }
+}
+
+function gColsOK(vis){
+  var c = Math.max(1, Math.floor(FW / Math.max(vis, 1)));
+  var r = Math.max(1, Math.floor(FH / Math.max(vis, 1)));
+  return c >= 3 && r >= 3;
+}
+
+// ---- simulation -----------------------------------------------------------
+// MODEL_VER covenant: any change to the arithmetic or constants below is a
+// new model version. Old run files replay only on the version that made them.
+function step(){
+  var vis = P.vis, vis2 = vis * vis, sr = vis * 0.42, sep2 = sr * sr;
+  var hw = FW * 0.5, hh = FH * 0.5;
+  var hashOK = P.hash && gColsOK(vis);
+  checks = 0;
+  if (hashOK) rebuildGrid(vis);
+  var cw = FW / gCols, ch = FH / gRows;
+
+  for (var i = 0; i < N; i++){
+    var bx = px[i], by = py[i];
+    var ax = 0, ay = 0, cxs = 0, cys = 0, sx = 0, sy = 0, n = 0;
+
+    if (hashOK){
+      var ci = bx / cw | 0; if (ci < 0) ci = 0; else if (ci >= gCols) ci = gCols - 1;
+      var cj = by / ch | 0; if (cj < 0) cj = 0; else if (cj >= gRows) cj = gRows - 1;
+      for (var oy = -1; oy <= 1; oy++){
+        var yy = (cj + oy + gRows) % gRows;
+        for (var ox = -1; ox <= 1; ox++){
+          var xx = (ci + ox + gCols) % gCols;
+          for (var j = gHead[yy * gCols + xx]; j !== -1; j = gNext[j]){
+            if (j === i) continue;
+            checks++;
+            var dx = px[j] - bx, dy = py[j] - by;
+            if (dx > hw) dx -= FW; else if (dx < -hw) dx += FW;
+            if (dy > hh) dy -= FH; else if (dy < -hh) dy += FH;
+            var d2 = dx * dx + dy * dy;
+            if (d2 > vis2 || d2 === 0) continue;
+            n++; ax += vx[j]; ay += vy[j]; cxs += dx; cys += dy;
+            if (d2 < sep2){ var iv = 1 / d2; sx -= dx * iv; sy -= dy * iv; }
+          }
+        }
+      }
+    } else {
+      for (var k = 0; k < N; k++){
+        if (k === i) continue;
+        checks++;
+        var dx2 = px[k] - bx, dy2 = py[k] - by;
+        if (dx2 > hw) dx2 -= FW; else if (dx2 < -hw) dx2 += FW;
+        if (dy2 > hh) dy2 -= FH; else if (dy2 < -hh) dy2 += FH;
+        var dd = dx2 * dx2 + dy2 * dy2;
+        if (dd > vis2 || dd === 0) continue;
+        n++; ax += vx[k]; ay += vy[k]; cxs += dx2; cys += dy2;
+        if (dd < sep2){ var iv2 = 1 / dd; sx -= dx2 * iv2; sy -= dy2 * iv2; }
+      }
+    }
+
+    nb[i] = n;
+    var nvx = vx[i], nvy = vy[i];
+    if (n > 0){
+      var inv = 1 / n;
+      nvx += (ax * inv - nvx) * 0.05 * P.ali + cxs * inv * 0.0016 * P.coh + sx * 22 * P.sep;
+      nvy += (ay * inv - nvy) * 0.05 * P.ali + cys * inv * 0.0016 * P.coh + sy * 22 * P.sep;
+    }
+    if (P.pointer){
+      var pdx = bx - mx, pdy = by - my, pd2 = pdx * pdx + pdy * pdy;
+      if (pd2 < 14400 && pd2 > 0){ var pf = 95 / Math.sqrt(pd2); nvx += pdx * pf * 0.022; nvy += pdy * pf * 0.022; }
+    }
+
+    var sp = Math.sqrt(nvx * nvx + nvy * nvy); if (sp < 1e-6) sp = 1e-6;
+    var kk = P.spd / sp; nvx *= kk; nvy *= kk;
+    var nx = bx + nvx, ny = by + nvy;
+    if (nx < 0) nx += FW; else if (nx >= FW) nx -= FW;
+    if (ny < 0) ny += FH; else if (ny >= FH) ny -= FH;
+    vx[i] = nvx; vy[i] = nvy; px[i] = nx; py[i] = ny;
+  }
+}
+
+// ---- draw -----------------------------------------------------------------
+function draw(){
+  var fx = OX, fy = OY, fw = FW * S, fh = FH * S;
+  ctx.fillStyle = '#12100E';
+  // letterbox bars stay solid
+  if (fy > 0){ ctx.fillRect(0, 0, W, fy); ctx.fillRect(0, fy + fh, W, H - fy - fh); }
+  if (fx > 0){ ctx.fillRect(0, 0, fx, H); ctx.fillRect(fx + fw, 0, W - fx - fw, H); }
+  // trail fade inside the field only
+  ctx.globalAlpha = P.fade;
+  ctx.fillRect(fx, fy, fw, fh);
+  ctx.globalAlpha = 1;
+
+  var crowd = P.crowd;
+  for (var i = 0; i < N; i++){
+    var sp = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]) || 1e-6;
+    var ux = vx[i] / sp, uy = vy[i] / sp;
+    var m = nb[i] / crowd; if (m > 1) m = 1;
+    ctx.fillStyle = LUT[(m * (LUT.length - 1)) | 0];
+    var x = px[i] * S + fx, y = py[i] * S + fy;
+    var l = 5.4 * S, b = 3.6 * S, w = 2.3 * S;
+    ctx.beginPath();
+    ctx.moveTo(x + ux * l, y + uy * l);
+    ctx.lineTo(x - ux * b + uy * w, y - uy * b - ux * w);
+    ctx.lineTo(x - ux * b - uy * w, y - uy * b + ux * w);
+    ctx.closePath(); ctx.fill();
+  }
+  if (P.pointer && mx > -1e4){
+    ctx.strokeStyle = 'rgba(224,138,76,.20)'; ctx.lineWidth = 1.5 * S;
+    ctx.beginPath(); ctx.arc(mx * S + fx, my * S + fy, 120 * S, 0, 6.2831853); ctx.stroke();
+  }
+}
+
+// ---- telemetry: order parameters ------------------------------------------
+// polarization: |mean unit velocity| — 1 when the flock travels as one.
+// rotation: |mean tangential component| about the flock centroid — high in a
+// mill/doughnut. Couzin 2002 separates the phases with exactly these two.
+// The centroid uses circular means because the field is a torus.
+function orderParams(){
+  if (!N) return {pol:0, rot:0, meanNb:0};
+  var sxv = 0, syv = 0, nbSum = 0;
+  var cxa = 0, cxb = 0, cya = 0, cyb = 0;
+  var TAU = 6.283185307179586;
+  for (var i = 0; i < N; i++){
+    var sp = Math.sqrt(vx[i]*vx[i] + vy[i]*vy[i]) || 1e-6;
+    sxv += vx[i] / sp; syv += vy[i] / sp;
+    nbSum += nb[i];
+    var tx = px[i] / FW * TAU, ty = py[i] / FH * TAU;
+    cxa += Math.cos(tx); cxb += Math.sin(tx);
+    cya += Math.cos(ty); cyb += Math.sin(ty);
+  }
+  var cx = (Math.atan2(cxb, cxa) / TAU + 1) % 1 * FW;
+  var cy = (Math.atan2(cyb, cya) / TAU + 1) % 1 * FH;
+  var hw = FW * 0.5, hh = FH * 0.5, rot = 0;
+  for (var j = 0; j < N; j++){
+    var dx = px[j] - cx, dy = py[j] - cy;
+    if (dx > hw) dx -= FW; else if (dx < -hw) dx += FW;
+    if (dy > hh) dy -= FH; else if (dy < -hh) dy += FH;
+    var r = Math.sqrt(dx*dx + dy*dy);
+    if (r < 1e-6) continue;
+    var sp2 = Math.sqrt(vx[j]*vx[j] + vy[j]*vy[j]) || 1e-6;
+    rot += (dx * vy[j] - dy * vx[j]) / (r * sp2);
+  }
+  return {
+    pol: Math.sqrt(sxv*sxv + syv*syv) / N,
+    rot: Math.abs(rot) / N,
+    meanNb: nbSum / N
+  };
+}
+
+// ---- clock ----------------------------------------------------------------
+function setRunning(r){
+  running = r;
+  statusEl.classList.toggle('run', running);
+  updateStatus();
+  send({t:'clock', running:running, frame:frame, rate:P.rate});
+}
+function stepOnce(){
+  var t0 = performance.now();
+  step(); frame++;
+  msAcc += performance.now() - t0; stepsTimed++;
+  needsDraw = true;
+}
+function updateStatus(){
+  statusEl.textContent = 'paused · frame ' + frame;
+}
+
+var lastT = performance.now(), fpsAcc = 0, fpsFr = 0, fps = 0;
+var msAcc = 0, stepsTimed = 0, lastMs = 0;
+function loop(t){
+  var dt = t - lastT; lastT = t; fpsAcc += dt; fpsFr++;
+  if (running){
+    acc += P.rate;
+    var guard = 0;
+    while (acc >= 1 && guard < 16){ stepOnce(); acc -= 1; guard++; }
+    if (acc >= 1) acc = 0;   // can't keep up; drop the debt rather than spiral
+  }
+  if (needsDraw){ draw(); needsDraw = false; if (!running) updateStatus(); }
+  if (fpsAcc > 500){
+    fps = Math.round(1000 / (fpsAcc / fpsFr));
+    lastMs = stepsTimed ? msAcc / stepsTimed : 0;
+    fpsAcc = 0; fpsFr = 0; msAcc = 0; stepsTimed = 0;
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---- setup ----------------------------------------------------------------
+// The determinate moment, as an explicit call. Re-enterable at any time:
+// the same profile always reproduces the same frame-0 flock (on this engine).
+function applySetup(profile){
+  profile = profile || {};
+  for (var k in SPEC){
+    if (!(k in profile)) continue;
+    if (k === 'stops'){ setStops(profile.stops); continue; }
+    var v = clampSpec(k, profile[k]);
+    if (v === null) continue;
+    if (k === 'seed') seed0 = v;
+    else if (k === 'aspect'){ aspect = v; }
+    else if (k === 'cnt'){ /* applied via init below */ }
+    else P[k] = v;
+  }
+  FW = Math.round(LOG_H * aspect); FH = LOG_H;
+  resize();
+  var n = clampSpec('cnt', 'cnt' in profile ? profile.cnt : N || 500);
+  setSeed(seed0);
+  init(n);
+  frame = 0; acc = 0; needsDraw = true;
+  setRunning(!!profile.run);
+  send({t:'setupDone', values:currentValues(), clock:clockState()});
+}
+
+function clampSpec(key, v){
+  var s = SPEC[key];
+  if (!s || s.colors) return null;
+  v = parseFloat(v);
+  if (isNaN(v)) return null;
+  if (v < s.min) v = s.min; else if (v > s.max) v = s.max;
+  if (s.integer) v = Math.round(v);
+  return v;
+}
+
+function setStops(arr){
+  if (!Array.isArray(arr) || arr.length < 2) return false;
+  for (var i = 0; i < arr.length; i++)
+    if (!/^#[0-9a-fA-F]{6}$/.test(arr[i])) return false;
+  STOPS = arr.slice();
+  LUT = buildLUT(STOPS, 64);
+  needsDraw = true;
+  return true;
+}
+
+// ---- protocol -------------------------------------------------------------
+var chan = ('BroadcastChannel' in window) ? new BroadcastChannel('boids-lab') : null;
+function send(m){
+  if (!chan) return;
+  m.proto = PROTO; m.from = 'model';
+  chan.postMessage(m);
+}
+
+function currentValues(){
+  var v = {seed:seed0, cnt:N, aspect:aspect, stops:STOPS.slice()};
+  for (var k in P) v[k] = P[k];
+  return v;
+}
+function clockState(){ return {running:running, frame:frame, rate:P.rate}; }
+
+function describeMsg(){
+  return {
+    t:'describe',
+    version:{app:'boids-instrument', model:MODEL_VER, proto:PROTO},
+    spec:SPEC,
+    values:currentValues(),
+    clock:clockState(),
+    field:{aspect:aspect, w:FW, h:FH},
+    presets:PRESETS
+  };
+}
+
+function applySet(k, v){
+  var s = SPEC[k];
+  if (!s) return send({t:'err', of:'set', key:k, msg:'unknown parameter'});
+  if (s.kind === 'setup')
+    return send({t:'err', of:'set', key:k, msg:'setup-only: send setup()'});
+  if (k === 'stops'){
+    if (!setStops(v)) return send({t:'err', of:'set', key:k, msg:'bad colour list'});
+  } else {
+    var cv2 = clampSpec(k, v);
+    if (cv2 === null) return send({t:'err', of:'set', key:k, msg:'bad value'});
+    P[k] = cv2; v = cv2;
+    if (k === 'fade' || k === 'crowd') needsDraw = true;
+  }
+  // echo so every remote (including late joiners mid-drag) stays true
+  send({t:'state', key:k, value:v, frame:frame});
+}
+
+function applyDo(cmd){
+  if (cmd === 'go') setRunning(true);
+  else if (cmd === 'pause') setRunning(false);
+  else if (cmd === 'step'){ if (!running){ stepOnce(); send({t:'clock', running:false, frame:frame, rate:P.rate}); } }
+  else send({t:'err', of:'do', msg:'unknown command: ' + cmd});
+}
+
+if (chan){
+  chan.onmessage = function(e){
+    var m = e.data;
+    if (!m || m.from === 'model') return;
+    if (m.t === 'hello') send(describeMsg());
+    else if (m.t === 'describe') send(describeMsg());
+    else if (m.t === 'set') applySet(m.key, m.value);
+    else if (m.t === 'setup') applySetup(m.profile);
+    else if (m.t === 'do') applyDo(m.cmd);
+  };
+  setInterval(function(){
+    var o = orderParams();
+    send({t:'telemetry', frame:frame, running:running, fps:running?fps:0,
+          stepMs:+lastMs.toFixed(2), checks:checks,
+          meanNb:+o.meanNb.toFixed(2), pol:+o.pol.toFixed(3), rot:+o.rot.toFixed(3)});
+  }, 250);
+}
+
+// ---- pointer (only felt when P.pointer is on) -----------------------------
+function toLogical(e){
+  mx = (e.clientX - OX) / S; my = (e.clientY - OY) / S;
+  if (P.pointer) needsDraw = true;
+}
+cv.addEventListener('pointermove', toLogical);
+cv.addEventListener('pointerdown', toLogical);
+cv.addEventListener('pointerleave', function(){ mx = -1e5; my = -1e5; });
+cv.addEventListener('pointerup', function(){ mx = -1e5; my = -1e5; });
+
+// resize never re-inits: the logical field is fixed, only the letterbox moves
+var rt;
+window.addEventListener('resize', function(){
+  clearTimeout(rt);
+  rt = setTimeout(resize, 140);
+});
+
+// ---- boot -----------------------------------------------------------------
+// The model owns its ability to exist: defaults, paused at frame 0, waiting.
+// A remote that connects takes authority via setup(). ?autorun for ambience.
+applySetup({run:/[?&]autorun\b/.test(location.search)});
+send(describeMsg());   // announce to any remote already listening
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Boids Remote — first client</title>
+<meta name="description" content="A remote control for the boids model. Owns every pixel of its presentation; the model owns all the truth.">
+<style>
+:root{
+  --bg:#12100E; --panel:rgba(28,25,22,.82); --line:rgba(255,255,255,.13);
+  --fg:#EDE6DA; --dim:#9C9184; --accent:#E08A4C;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex; justify-content:center; padding:18px 12px 40px;
+}
+#app{width:100%;max-width:340px}
+h1{font-size:15px;font-weight:600;margin:0}
+.sub{font-size:11px;color:var(--dim)}
+#conn{display:inline-block;width:8px;height:8px;border-radius:50%;background:#B3442E;margin-right:7px;vertical-align:1px}
+#conn.ok{background:#4CAF7D}
+.card{
+  background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  padding:13px; margin-top:12px;
+}
+.card h2{font-size:11px;font-weight:500;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 0 10px}
+.row{margin-bottom:11px}
+.row:last-child{margin-bottom:2px}
+.lbl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:4px;letter-spacing:.2px}
+.lbl b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;display:block;cursor:pointer
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);margin-top:-6px;border:none}
+input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--accent);border:none}
+input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
+input[type=number]{
+  font:inherit;font-size:13px;width:100%;padding:5px 8px;border-radius:7px;
+  background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
+  font-variant-numeric:tabular-nums;
+}
+input[type=number]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+button{
+  font:inherit;font-size:11.5px;padding:6px 10px;border-radius:7px;cursor:pointer;
+  background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
+}
+button:hover{background:rgba(255,255,255,.11)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);border-color:var(--accent);color:#1A1207;font-weight:500}
+button.wide{flex:1}
+.stats{display:flex;flex-wrap:wrap;gap:10px 14px;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+.stats b{color:var(--fg);font-weight:500}
+.legend{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--dim);margin-top:9px}
+.legend #ramp{flex:1;height:6px;border-radius:3px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.field label{display:block;font-size:11px;color:var(--dim);margin-bottom:3px}
+/* the setup card looks different on purpose: these fields set a START, they
+   do not steer the live flock. Setup fields and live fields must not look alike. */
+#setup{border-color:rgba(224,138,76,.45)}
+#setup h2{color:var(--accent)}
+.note{font-size:11px;color:var(--dim);line-height:1.5;margin:9px 0 0}
+#frame{font-size:13px}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div>
+    <h1><span id="conn"></span>Boids Remote</h1>
+    <div class="sub" id="connText">looking for a model…</div>
+  </div>
+
+  <div class="card">
+    <h2>Presets</h2>
+    <div class="btns" id="presets"></div>
+  </div>
+
+  <div class="card">
+    <h2>Live — behavioural</h2>
+    <div id="liveSliders"></div>
+  </div>
+
+  <div class="card">
+    <h2>Live — display</h2>
+    <div id="dispSliders"></div>
+    <div class="legend"><span>alone</span><div id="ramp"></div><span id="crowdCap">7+ seen</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Engine</h2>
+    <div class="btns">
+      <button id="b-hash" class="wide">Spatial hash: —</button>
+      <button id="b-pointer" class="wide">Pointer: —</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Clock</h2>
+    <div class="btns" style="margin-bottom:10px">
+      <button id="b-go" class="wide">Go</button>
+      <button id="b-pause" class="wide">Pause</button>
+      <button id="b-step" class="wide">Step</button>
+    </div>
+    <div class="row"><div class="lbl"><span>Clock rate</span><b id="v-rate">1</b></div>
+      <input type="range" id="s-rate" min="0.25" max="8" step="0.25" value="1" aria-label="Clock rate"></div>
+    <div class="stats"><span>frame <b id="frame">—</b></span></div>
+  </div>
+
+  <div class="card">
+    <h2>Readouts</h2>
+    <div class="stats">
+      <span>fps <b id="o-fps">—</b></span>
+      <span>step <b id="o-ms">—</b> ms</span>
+      <span>checks <b id="o-chk">—</b></span>
+      <span>mean nb <b id="o-nb">—</b></span>
+      <span>polarization <b id="o-pol">—</b></span>
+      <span>rotation <b id="o-rot">—</b></span>
+    </div>
+    <p class="note">polarization ≈ 1: travelling as one flock. rotation high: milling. Both near 0: a swarm.</p>
+  </div>
+
+  <div class="card" id="setup">
+    <h2>Setup — a new start</h2>
+    <div class="grid3" style="margin-bottom:10px">
+      <div class="field"><label for="f-seed">Seed</label><input type="number" id="f-seed" min="1" step="1" value="1234567"></div>
+      <div class="field"><label for="f-cnt">Birds</label><input type="number" id="f-cnt" min="50" max="4000" step="50" value="500"></div>
+      <div class="field"><label for="f-aspect">Aspect</label><input type="number" id="f-aspect" min="0.5" max="4" step="0.01" value="1.78"></div>
+    </div>
+    <div class="btns">
+      <button id="b-apply" class="wide">Apply setup (paused)</button>
+      <button id="b-scatter" class="wide">Scatter (new seed)</button>
+    </div>
+    <p class="note">Setup restarts the flock from frame 0 with the values above plus the current sliders. It is the only reproducible moment: same seed, same flock, every time.</p>
+  </div>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var PROTO = 1;
+var chan = ('BroadcastChannel' in window) ? new BroadcastChannel('boids-lab') : null;
+if (!chan){
+  document.getElementById('connText').textContent = 'BroadcastChannel unsupported in this browser';
+  return;
+}
+function send(m){ m.proto = PROTO; m.from = 'remote'; chan.postMessage(m); }
+
+var spec = null, values = null, running = false;
+var LIVE = ['sep','ali','coh','vis','spd'];      // behavioural sliders
+var DISP = ['fade','crowd'];                      // display sliders
+var $ = function(id){ return document.getElementById(id); };
+
+// ---- build sliders from the model's describe() ----------------------------
+function fmt(k, v){
+  var s = spec[k];
+  return s && s.integer ? String(Math.round(v)) : (+v).toFixed(v % 1 ? 2 : 1);
+}
+function buildSliders(host, keys){
+  host.innerHTML = '';
+  keys.forEach(function(k){
+    var s = spec[k];
+    var row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<div class="lbl"><span>' + s.label + '</span><b id="v-' + k + '"></b></div>' +
+      '<input type="range" id="s-' + k + '" min="' + s.min + '" max="' + s.max +
+      '" step="' + s.step + '" aria-label="' + s.label + '">';
+    host.appendChild(row);
+    var inp = row.querySelector('input');
+    inp.value = values[k];
+    row.querySelector('b').textContent = fmt(k, values[k]);
+    inp.addEventListener('input', function(){
+      var v = parseFloat(this.value);
+      values[k] = v;
+      $('v-' + k).textContent = fmt(k, v);
+      send({t:'set', key:k, value:v});
+    });
+  });
+}
+
+function buildPresets(presets){
+  var host = $('presets'); host.innerHTML = '';
+  Object.keys(presets).forEach(function(name){
+    var b = document.createElement('button');
+    b.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+    b.addEventListener('click', function(){
+      var profile = {};
+      for (var k in presets[name]) profile[k] = presets[name][k];
+      profile.seed = readNum('f-seed', 1);
+      profile.aspect = readNum('f-aspect', 1.78);
+      profile.run = true;                     // presets are demonstrations
+      $('f-cnt').value = profile.cnt;
+      send({t:'setup', profile:profile});
+    });
+    host.appendChild(b);
+  });
+}
+
+function readNum(id, dflt){
+  var v = parseFloat($(id).value);
+  return isNaN(v) ? dflt : v;
+}
+
+// ---- reflect model truth into the UI --------------------------------------
+function reflect(k, v){
+  if (values) values[k] = v;
+  var inp = $('s-' + k);
+  if (inp && document.activeElement !== inp){ inp.value = v; }
+  var lbl = $('v-' + k);
+  if (lbl) lbl.textContent = fmt(k, v);
+  if (k === 'hash') paintToggle('b-hash', 'Spatial hash', v);
+  if (k === 'pointer') paintToggle('b-pointer', 'Pointer', v);
+  if (k === 'crowd') $('crowdCap').textContent = Math.round(v) + '+ seen';
+  if (k === 'stops') $('ramp').style.background = 'linear-gradient(90deg,' + v.join(',') + ')';
+}
+function paintToggle(id, label, v){
+  var b = $(id);
+  b.textContent = label + ': ' + (v ? 'on' : 'off');
+  b.classList.toggle('on', !!v);
+}
+function reflectClock(c){
+  running = c.running;
+  $('b-go').classList.toggle('on', running);
+  $('b-pause').classList.toggle('on', !running);
+  $('frame').textContent = c.frame;
+  if ('rate' in c) reflect('rate', c.rate);
+}
+function reflectAll(msg){
+  spec = msg.spec; values = msg.values;
+  buildSliders($('liveSliders'), LIVE);
+  buildSliders($('dispSliders'), DISP);
+  buildPresets(msg.presets);
+  ['hash','pointer','crowd','stops','rate'].forEach(function(k){ reflect(k, values[k]); });
+  if (document.activeElement !== $('f-seed')) $('f-seed').value = values.seed;
+  if (document.activeElement !== $('f-cnt')) $('f-cnt').value = values.cnt;
+  if (document.activeElement !== $('f-aspect')) $('f-aspect').value = (+values.aspect).toFixed(2);
+  reflectClock(msg.clock);
+  connected(msg.version);
+}
+
+var connTimer = null, isConnected = false;
+function connected(ver){
+  isConnected = true;
+  $('conn').classList.add('ok');
+  $('connText').textContent = 'model v' + ver.model + ' · protocol v' + ver.proto;
+  if (connTimer){ clearInterval(connTimer); connTimer = null; }
+}
+
+chan.onmessage = function(e){
+  var m = e.data;
+  if (!m || m.from !== 'model') return;
+  if (m.t === 'describe') reflectAll(m);
+  else if (m.t === 'state') reflect(m.key, m.value);
+  else if (m.t === 'clock') reflectClock(m);
+  else if (m.t === 'setupDone'){ values = m.values;
+    ['sep','ali','coh','vis','spd','fade','crowd','stops','hash','pointer','rate'].forEach(function(k){ reflect(k, values[k]); });
+    reflectClock(m.clock);
+  }
+  else if (m.t === 'telemetry'){
+    $('frame').textContent = m.frame;
+    $('o-fps').textContent = m.running ? m.fps : '—';
+    $('o-ms').textContent = m.stepMs;
+    $('o-chk').textContent = m.checks >= 1e6 ? (m.checks/1e6).toFixed(1)+'M'
+                          : m.checks >= 1e3 ? (m.checks/1e3).toFixed(0)+'k' : m.checks;
+    $('o-nb').textContent = m.meanNb;
+    $('o-pol').textContent = m.pol;
+    $('o-rot').textContent = m.rot;
+  }
+  else if (m.t === 'err'){ $('connText').textContent = 'model: ' + m.msg; }
+};
+
+// ---- controls that are not sliders ----------------------------------------
+$('b-go').addEventListener('click', function(){ send({t:'do', cmd:'go'}); });
+$('b-pause').addEventListener('click', function(){ send({t:'do', cmd:'pause'}); });
+$('b-step').addEventListener('click', function(){
+  if (running) send({t:'do', cmd:'pause'});
+  else send({t:'do', cmd:'step'});
+});
+$('s-rate').addEventListener('input', function(){
+  var v = parseFloat(this.value);
+  $('v-rate').textContent = v;
+  send({t:'set', key:'rate', value:v});
+});
+$('b-hash').addEventListener('click', function(){
+  send({t:'set', key:'hash', value:values && values.hash ? 0 : 1});
+});
+$('b-pointer').addEventListener('click', function(){
+  send({t:'set', key:'pointer', value:values && values.pointer ? 0 : 1});
+});
+
+function setupProfile(){
+  var profile = {
+    seed: readNum('f-seed', 1234567),
+    cnt: readNum('f-cnt', 500),
+    aspect: readNum('f-aspect', 1.78),
+    run: false
+  };
+  // current live sliders become the initial conditions
+  LIVE.concat(DISP).forEach(function(k){ if (values && k in values) profile[k] = values[k]; });
+  return profile;
+}
+$('b-apply').addEventListener('click', function(){
+  send({t:'setup', profile:setupProfile()});
+});
+$('b-scatter').addEventListener('click', function(){
+  $('f-seed').value = 1 + Math.floor(Math.random() * 2147483646);
+  var p = setupProfile();
+  p.run = running;      // scattering mid-flight keeps flying
+  send({t:'setup', profile:p});
+});
+
+// ---- find the model -------------------------------------------------------
+send({t:'hello'});
+connTimer = setInterval(function(){
+  if (!isConnected) send({t:'hello'});
+}, 1000);
+})();
+</script>
+</body>
+</html>
