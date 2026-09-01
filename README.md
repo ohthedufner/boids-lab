@@ -91,6 +91,9 @@ show up in the UI automatically.
 
 ## Reading
 
+- `docs/driving-the-instrument.md` — **start here to use the tablet**: the
+  field guide for whoever is holding it, including living-room setup and
+  five things to try tonight.
 - `docs/boids-panel-stories.md` — the museum-placard prose for every control.
 - `docs/boids-history-and-provenance.md` — the sourced history: Reynolds,
   Aoki, Vicsek, Couzin, STARFLAG, and which knobs have no ancestor at all.
