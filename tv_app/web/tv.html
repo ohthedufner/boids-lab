@@ -26,6 +26,11 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 #hd{display:flex;align-items:baseline;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);flex:0 0 auto}
 #hd h1{font-size:22px;margin:0;font-weight:600;letter-spacing:.2px}
 #hd span{font-size:14px;color:var(--dim);margin-left:auto}
+/* #rows scrolls, and on TV-density screens only a few rows fit at once.
+   There is deliberately no scrollbar or chevron: this is a 10-foot UI and
+   the D-pad is the scrollbar — moving focus down past the fold scrolls the
+   next row into view (see focusRow). Known usability tradeoff: nothing
+   advertises the rows below. Revisit if guests never find Flock size. */
 #rows{padding:12px 14px;overflow-y:auto;flex:1 1 auto}
 #ft{padding:12px 20px 14px;border-top:1px solid var(--line);flex:0 0 auto}
 #stats{font-size:15px;color:var(--dim);font-variant-numeric:tabular-nums;margin-bottom:6px}
@@ -53,6 +58,26 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 .row.copy .btns button{font-size:13px;color:var(--dim);background:none;border-color:transparent}
 .row.copy .btns button.sel{border-color:var(--accent);color:var(--fg)}
 
+/* the splash: the word arrives from a distance inside its own glow, and the
+   glow's footprint is an invisible border the flock refuses to cross */
+#splash{position:fixed;inset:0;z-index:30;background:var(--bg);transition:opacity .8s ease}
+#splash.gone{opacity:0;pointer-events:none}
+#scv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#slogo{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-58%) scale(.08);
+  font:300 15vw/1 "sans-serif-light","Segoe UI Light","Segoe UI",Roboto,ui-sans-serif,sans-serif;
+  letter-spacing:.07em;color:#F3EBDD;opacity:0;user-select:none;white-space:nowrap;
+  text-shadow:0 0 .09em rgba(237,230,218,.55), 0 0 .25em rgba(224,138,76,.6),
+              0 0 .6em rgba(224,138,76,.4), 0 0 1.1em rgba(224,138,76,.22);
+}
+#sprompt{
+  position:absolute;left:0;right:0;top:70%;text-align:center;
+  font-size:2.1vw;letter-spacing:.34em;color:var(--dim);
+  opacity:0;transition:opacity 1.4s ease;user-select:none;
+}
+#sprompt.show{opacity:1;animation:spulse 2.8s ease-in-out infinite}
+@keyframes spulse{50%{opacity:.4}}
+
 /* the license dialog */
 #lic{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.62);
   display:flex;align-items:center;justify-content:center}
@@ -70,6 +95,12 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 <body>
 
 <iframe id="model" title="Boids model"></iframe>
+
+<div id="splash">
+  <canvas id="scv"></canvas>
+  <div id="slogo">boids</div>
+  <div id="sprompt">press any button to begin</div>
+</div>
 
 <div id="panel" class="hid">
   <div id="hd"><h1 id="title">Boids</h1><span id="sub">waiting for the model…</span></div>
@@ -142,6 +173,132 @@ $('model').addEventListener('load', function(){
     d.head.appendChild(st);
   } catch(e){}
 });
+
+// ---- splash ----------------------------------------------------------------
+// First-run intro: "boids" grows in from a distance while a small
+// self-contained flock (a distillation of the original toy's three rules)
+// streams around it. The logo's glow doubles as an invisible repulsion
+// border — the same trick as the toy's pointer force — so the flock
+// visibly refuses to cross the light. Any button begins; after 45 idle
+// seconds it begins on its own, so ambient mode still works unattended.
+// The model runs behind the splash the whole time (?autorun), so beginning
+// reveals a flock already in flight. ?nosplash skips all of it.
+var splashActive = false, splashKey = null;
+(function(){
+  var el = $('splash');
+  if (q('nosplash') !== null){ el.parentNode.removeChild(el); return; }
+  splashActive = true;
+  var logo = $('slogo'), prompt = $('sprompt');
+  var cv = $('scv'), ctx = cv.getContext('2d', {alpha:false});
+  var W = 0, H = 0, DPR = 1;
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.max(1, Math.round(W * DPR));
+    cv.height = Math.max(1, Math.round(H * DPR));
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = '#12100E'; ctx.fillRect(0, 0, W, H);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  var N = 170, SPD = 2.3;
+  var px = new Float32Array(N), py = new Float32Array(N);
+  var vx = new Float32Array(N), vy = new Float32Array(N), nb = new Float32Array(N);
+  for (var i = 0; i < N; i++){
+    px[i] = Math.random() * W; py[i] = Math.random() * H;
+    var a = Math.random() * 6.2831853;
+    vx[i] = Math.cos(a) * SPD; vy[i] = Math.sin(a) * SPD;
+  }
+
+  var born = performance.now(), ready = false, readyAt = 0, raf = 0;
+  function ease(x){ x = Math.max(0, Math.min(1, x)); return 1 - Math.pow(1 - x, 3); }
+
+  function step(rx0, ry0, rx1, ry1, g){
+    var vis = 54, vis2 = vis * vis, sr = vis * 0.42, sep2 = sr * sr;
+    var hw = W * 0.5, hh = H * 0.5, reach = Math.max(W, H) * 0.09;
+    for (var i = 0; i < N; i++){
+      var bx = px[i], by = py[i];
+      var ax = 0, ay = 0, cxs = 0, cys = 0, sx = 0, sy = 0, n = 0;
+      for (var k = 0; k < N; k++){
+        if (k === i) continue;
+        var dx = px[k] - bx, dy = py[k] - by;
+        if (dx > hw) dx -= W; else if (dx < -hw) dx += W;
+        if (dy > hh) dy -= H; else if (dy < -hh) dy += H;
+        var d2 = dx * dx + dy * dy;
+        if (d2 > vis2 || d2 === 0) continue;
+        n++; ax += vx[k]; ay += vy[k]; cxs += dx; cys += dy;
+        if (d2 < sep2){ var iv = 1 / d2; sx -= dx * iv; sy -= dy * iv; }
+      }
+      nb[i] = n;
+      var nvx = vx[i], nvy = vy[i];
+      if (n > 0){
+        var inv = 1 / n;
+        nvx += (ax * inv - nvx) * 0.05 + cxs * inv * 0.0016 * 0.9 + sx * 22 * 1.6;
+        nvy += (ay * inv - nvy) * 0.05 + cys * inv * 0.0016 * 0.9 + sy * 22 * 1.6;
+      }
+      // the glow border: push from the closest point of the logo's box, the
+      // toy's pointer repulsion aimed at typography
+      if (g > 0.05){
+        var cxp = bx < rx0 ? rx0 : bx > rx1 ? rx1 : bx;
+        var cyp = by < ry0 ? ry0 : by > ry1 ? ry1 : by;
+        var gdx = bx - cxp, gdy = by - cyp, gd2 = gdx * gdx + gdy * gdy;
+        if (gd2 === 0){ gdx = bx - (rx0 + rx1) * 0.5; gdy = by - (ry0 + ry1) * 0.5; gd2 = gdx * gdx + gdy * gdy || 1; }
+        if (gd2 < reach * reach){
+          var gd = Math.sqrt(gd2);
+          var f = (1 - gd / reach) * 2.8 * g / (gd || 1);
+          nvx += gdx * f; nvy += gdy * f;
+        }
+      }
+      var sp = Math.sqrt(nvx * nvx + nvy * nvy); if (sp < 1e-6) sp = 1e-6;
+      var kk = SPD / sp; nvx *= kk; nvy *= kk;
+      var nx = bx + nvx, ny = by + nvy;
+      if (nx < 0) nx += W; else if (nx >= W) nx -= W;
+      if (ny < 0) ny += H; else if (ny >= H) ny -= H;
+      vx[i] = nvx; vy[i] = nvy; px[i] = nx; py[i] = ny;
+    }
+  }
+  function draw(){
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = '#12100E'; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    for (var i = 0; i < N; i++){
+      var sp = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]) || 1e-6;
+      var ux = vx[i] / sp, uy = vy[i] / sp;
+      var m = nb[i] / 9; if (m > 1) m = 1;
+      ctx.fillStyle = 'rgb(' + (86 + 138 * m | 0) + ',' + (146 - 8 * m | 0) + ',' + (222 - 138 * m | 0) + ')';
+      var x = px[i], y = py[i];
+      ctx.beginPath();
+      ctx.moveTo(x + ux * 5.4, y + uy * 5.4);
+      ctx.lineTo(x - ux * 3.6 + uy * 2.3, y - uy * 3.6 - ux * 2.3);
+      ctx.lineTo(x - ux * 3.6 - uy * 2.3, y - uy * 3.6 + ux * 2.3);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  function frame(t){
+    var g = ease((t - born - 250) / 2900);
+    logo.style.opacity = g;
+    logo.style.transform = 'translate(-50%,-58%) scale(' + (0.08 + 0.92 * g) + ')';
+    if (!ready && g >= 1 && t - born > 3900){ ready = true; readyAt = t; prompt.classList.add('show'); }
+    if (ready && t - readyAt > 45000) return begin();
+    var r = logo.getBoundingClientRect(), pad = 10;
+    step(r.left - pad, r.top - pad, r.right + pad, r.bottom + pad, g);
+    draw();
+    raf = requestAnimationFrame(frame);
+  }
+  function begin(){
+    if (!splashActive) return;
+    splashActive = false;
+    cancelAnimationFrame(raf);
+    el.classList.add('gone');
+    setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 900);
+  }
+  splashKey = function(){
+    if (ready) begin();
+    else born -= 6000;   // impatient? the word finishes arriving right now
+  };
+  raf = requestAnimationFrame(frame);
+})();
 
 // ---- transport: the model lives in the iframe, one BroadcastChannel away ----
 var chan = new BroadcastChannel('boids-lab');
@@ -246,7 +403,7 @@ function focusRow(i){
   rowIdx = Math.max(0, Math.min(rows.length - 1, i));
   var r = rows[rowIdx];
   r.el.classList.add('focus');
-  r.el.scrollIntoView({block:'nearest'});
+  r.el.scrollIntoView({block:'nearest'});   // the D-pad is the scrollbar — see the #rows note
   paintCols();
 }
 function paintCols(){
@@ -279,6 +436,7 @@ function closeLic(){ licOpen = false; $('lic').classList.add('hid'); tellBridge(
 $('licOk').addEventListener('click', closeLic);
 
 function key(name){
+  if (splashActive){ if (splashKey) splashKey(name); return; }
   if (licOpen){ if (name === 'Enter' || name === 'Back' || name === 'Menu') closeLic(); return; }
   if (name === 'PlayPause'){ togglePause(); return; }   // works with the panel away
   if (!visible){ if (name !== 'Back') show(); return; }

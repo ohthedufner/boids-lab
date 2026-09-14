@@ -13,6 +13,13 @@ no PC, no Node, nothing else running.
 Neither app has onscreen controls in the way: the panel only appears when you
 press a button on the TV remote, and slides away on its own.
 
+Launching either app opens with the word **boids** growing in from a
+distance, its glow acting as an invisible border the flock refuses to cross
+— press any button to begin (or don't: it begins on its own after a while,
+so ambient mode works unattended).
+
+![The splash: the word boids glowing, the flock kept out of the light](../docs/media/tv-splash.png)
+
 ![Boids Lab paused on the TV: the D-pad panel on the right, the pairing QR bottom-left](../docs/media/tv-lab-paused.png)
 
 ![TV Boids: the same flock, the original toy's controls on the D-pad panel](../docs/media/tv-boids-panel.png)
