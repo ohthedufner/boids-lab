@@ -19,8 +19,8 @@ android {
         applicationId "org.boidslab.tv.boids"
         minSdk 26
         targetSdk 37
-        versionCode 5
-        versionName "1.3"
+        versionCode 6
+        versionName "1.3.1"
     }
 
     compileOptions {

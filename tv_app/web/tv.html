@@ -63,10 +63,15 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 #splash{position:fixed;inset:0;z-index:30;background:var(--bg);transition:opacity .8s ease}
 #splash.gone{opacity:0;pointer-events:none}
 #scv{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* the word itself: font and weight live here (the launcher icon uses a
+   bolder cut — see tv_app/art/brand.html). will-change keeps the glowing
+   text on its own GPU layer so the approach scales smoothly instead of
+   re-rasterizing the shadows every frame. */
 #slogo{
   position:absolute;top:50%;left:50%;transform:translate(-50%,-58%) scale(.08);
   font:300 15vw/1 "sans-serif-light","Segoe UI Light","Segoe UI",Roboto,ui-sans-serif,sans-serif;
   letter-spacing:.07em;color:#F3EBDD;opacity:0;user-select:none;white-space:nowrap;
+  will-change:transform,opacity;
   text-shadow:0 0 .09em rgba(237,230,218,.55), 0 0 .25em rgba(224,138,76,.6),
               0 0 .6em rgba(224,138,76,.4), 0 0 1.1em rgba(224,138,76,.22);
 }
@@ -217,8 +222,19 @@ var splashActive = false, splashKey = null;
     vx[i] = Math.cos(a) * SPD; vy[i] = Math.sin(a) * SPD;
   }
 
+  // ---- arrival tuning ------------------------------------------------------
+  // Time-based, not frame-based: every display frame (~60/s) asks "where
+  // should the word be now?", so GROW_MS sets both the speed and, implicitly,
+  // the frame count (GROW_MS / 16.7 ≈ frames). GROW_DELAY is the stillness
+  // before the approach; PROMPT_AFTER the beat before the prompt fades in.
+  // easeApproach shapes the motion: gentle start, long slowing landing — it
+  // should read as something coming your way, not a splash zoom.
+  var GROW_DELAY = 400, GROW_MS = 5200, PROMPT_AFTER = 700;
+  function easeApproach(x){
+    x = Math.max(0, Math.min(1, x));
+    return x < 0.5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2;
+  }
   var born = performance.now(), ready = false, readyAt = 0, raf = 0;
-  function ease(x){ x = Math.max(0, Math.min(1, x)); return 1 - Math.pow(1 - x, 3); }
 
   function step(rx0, ry0, rx1, ry1, g, reach){
     var vis = 54, vis2 = vis * vis, sr = vis * 0.42, sep2 = sr * sr;
@@ -282,10 +298,12 @@ var splashActive = false, splashKey = null;
     }
   }
   function frame(t){
-    var g = ease((t - born - 250) / 2900);
+    var g = easeApproach((t - born - GROW_DELAY) / GROW_MS);
     logo.style.opacity = g;
     logo.style.transform = 'translate(-50%,-58%) scale(' + (0.08 + 0.92 * g) + ')';
-    if (!ready && g >= 1 && t - born > 3900){ ready = true; readyAt = t; prompt.classList.add('show'); }
+    if (!ready && g >= 1 && t - born > GROW_DELAY + GROW_MS + PROMPT_AFTER){
+      ready = true; readyAt = t; prompt.classList.add('show');
+    }
     if (ready && t - readyAt > 45000) return begin();
     // The border hugs the glow and scales with the word — deliberately tight,
     // so birds graze the light and fly straight through the prompt text below.
@@ -305,7 +323,7 @@ var splashActive = false, splashKey = null;
   }
   splashKey = function(){
     if (ready) begin();
-    else born -= 6000;   // impatient? the word finishes arriving right now
+    else born -= GROW_MS;   // impatient? the word finishes arriving right now
   };
   raf = requestAnimationFrame(frame);
 })();

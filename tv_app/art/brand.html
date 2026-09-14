@@ -42,9 +42,11 @@ var word = document.getElementById('word'), tag = document.getElementById('tag')
 // warm for Boids Lab, teal for TV Boids — same family, instantly distinct in a row
 var PAL = APP === 'boids'
   ? {glow:'47,182,168',  tagCol:'#2FB6A8', tagText:'tv',
-     birds:['#2FB6A8','#3D63D8','#8FD8CE','#EFC94C','#F3EBDD']}
+     birds:['#2FB6A8','#3D63D8','#8FD8CE','#EFC94C','#F3EBDD'],
+     rgb:['47,182,168','61,99,216','239,201,76']}
   : {glow:'224,138,76',  tagCol:'#E08A4C', tagText:'lab',
-     birds:['#E08A4C','#EFC94C','#F0B98A','#2FB6A8','#F3EBDD']};
+     birds:['#E08A4C','#EFC94C','#F0B98A','#2FB6A8','#F3EBDD'],
+     rgb:['224,138,76','239,201,76','47,182,168']};
 
 function glowShadow(em){
   return '0 0 ' + 0.09*em + 'px rgba(237,230,218,.55), 0 0 ' + 0.25*em + 'px rgba(' + PAL.glow + ',.6), ' +
@@ -74,6 +76,41 @@ function bird(x, y, ang, s, col, trail, curve){
   ctx.shadowColor = col; ctx.shadowBlur = s*1.4;
   tri(x, y, ang, s, col, 1);
   ctx.shadowBlur = 0;
+}
+// a boid as a tadpole: roundish head, quick taper just off the head, then a
+// long slow taper to a tail that fades out like a trail. col is 'R,G,B'.
+function tadpole(x, y, ang, r, len, col, bend){
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(ang);
+  var grad = ctx.createLinearGradient(r, 0, -len, bend || 0);
+  grad.addColorStop(0, 'rgba(' + col + ',1)');
+  grad.addColorStop(0.4, 'rgba(' + col + ',.95)');
+  grad.addColorStop(1, 'rgba(' + col + ',0)');
+  ctx.fillStyle = grad;
+  ctx.shadowColor = 'rgb(' + col + ')';
+  ctx.shadowBlur = r * 1.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, 6.2832);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  var S = 18, i, s, xx, yy, w;
+  for (i = 0; i <= S; i++){
+    s = i / S;
+    xx = -r * 0.2 - (len - r * 0.2) * s;
+    yy = (bend || 0) * s * s;
+    w = r * (0.55 * Math.exp(-s * 5) + 0.27) * (1 - s);
+    if (i === 0) ctx.moveTo(xx, yy - w); else ctx.lineTo(xx, yy - w);
+  }
+  for (i = S; i >= 0; i--){
+    s = i / S;
+    xx = -r * 0.2 - (len - r * 0.2) * s;
+    yy = (bend || 0) * s * s;
+    w = r * (0.55 * Math.exp(-s * 5) + 0.27) * (1 - s);
+    ctx.lineTo(xx, yy + w);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
 }
 function vignette(cx, cy, r, a){
   var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
@@ -161,6 +198,41 @@ else if (ART === 'murmuration'){
   tag.style.fontSize = Math.round(H*0.075) + 'px';
   tag.style.left = Math.round(wr3b.right + H*0.055) + 'px';
   tag.style.top = Math.round(wr3b.bottom - H*0.095) + 'px';
+}
+else if (ART === 'icon-word'){
+  // the splash in miniature: the word centered (a touch bolder for small
+  // sizes), three tadpole boids orbiting it — thirds of a circle, so the
+  // composition's center of gravity sits on the word. All-black ground, no
+  // border: the moody one in the launcher row.
+  vignette(W*0.5, H*0.5, W*0.55, 0.10);
+  word.textContent = 'boids';
+  word.style.font = '600 ' + Math.round(H*0.175) + 'px "Segoe UI", Roboto, sans-serif';
+  word.style.letterSpacing = '.05em';
+  word.style.textShadow = glowShadow(H*0.26);
+  document.body.appendChild(word);
+  var wri = word.getBoundingClientRect();
+  word.style.left = Math.round((W - wri.width)/2) + 'px';
+  word.style.top = Math.round((H - wri.height)/2) + 'px';
+  var R = W*0.265, cx0 = W*0.5, cy0 = H*0.5;
+  var spots = [
+    {th: -1.5708, sc: 1.15},   // top — the lead, slightly larger
+    {th:  2.6180, sc: 0.92},   // lower-left
+    {th:  0.5236, sc: 0.92}    // lower-right
+  ];
+  for (var ti = 0; ti < 3; ti++){
+    var sp2 = spots[ti];
+    var bx2 = cx0 + Math.cos(sp2.th)*R, by2 = cy0 + Math.sin(sp2.th)*R;
+    var head = W*0.033*sp2.sc, tl = W*0.30*sp2.sc;
+    tadpole(bx2, by2, sp2.th + 1.5708, head, tl, PAL.rgb[ti], head*2.4);
+  }
+  if (q('debug')){
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx0, cy0, R, 0, 6.2832); ctx.stroke();
+    for (var di = 0; di < 3; di++){
+      var dx3 = cx0 + Math.cos(spots[di].th)*R, dy3 = cy0 + Math.sin(spots[di].th)*R;
+      ctx.beginPath(); ctx.arc(dx3, dy3, 4, 0, 6.2832); ctx.stroke();
+    }
+  }
 }
 else if (ART === 'icon-three'){
   // three birds for three rules
