@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TV Boids Remote</title>
+<meta name="description" content="The pocket remote for TV Boids: the original toy's controls — presets, three rules, vision, speed, flock size, trails — driving the model on the TV.">
+<style>
+:root{
+  --bg:#12100E; --panel:rgba(28,25,22,.82); --line:rgba(255,255,255,.13);
+  --fg:#EDE6DA; --dim:#9C9184; --accent:#E08A4C;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex; justify-content:center; padding:18px 12px 40px;
+}
+#app{width:100%;max-width:340px}
+h1{font-size:15px;font-weight:600;margin:0}
+.sub{font-size:11px;color:var(--dim)}
+#conn{display:inline-block;width:8px;height:8px;border-radius:50%;background:#B3442E;margin-right:7px;vertical-align:1px}
+#conn.ok{background:#4CAF7D}
+.card{
+  background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  padding:13px; margin-top:12px;
+}
+.card h2{font-size:11px;font-weight:500;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 0 10px}
+.row{margin-bottom:11px}
+.row:last-child{margin-bottom:2px}
+.lbl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:4px;letter-spacing:.2px}
+.lbl b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;display:block;cursor:pointer
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);margin-top:-6px;border:none}
+input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--accent);border:none}
+input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+button{
+  font:inherit;font-size:11.5px;padding:6px 10px;border-radius:7px;cursor:pointer;
+  background:rgba(255,255,255,.06);color:var(--fg);border:1px solid var(--line);
+}
+button:hover{background:rgba(255,255,255,.11)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);border-color:var(--accent);color:#1A1207;font-weight:500}
+button.wide{flex:1}
+.stats{display:flex;flex-wrap:wrap;gap:10px 14px;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+.stats b{color:var(--fg);font-weight:500}
+.note{font-size:11px;color:var(--dim);line-height:1.5;margin:9px 0 0}
+body.obs .card button,body.obs .card input{pointer-events:none;opacity:.5}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div>
+    <h1><span id="conn"></span>TV Boids Remote</h1>
+    <div class="sub" id="connText">looking for a model…</div>
+  </div>
+
+  <div class="card">
+    <h2>Presets</h2>
+    <div class="btns" id="presets"></div>
+  </div>
+
+  <div class="card">
+    <h2>The flock</h2>
+    <div id="sliders"></div>
+  </div>
+
+  <div class="card">
+    <h2>Buttons</h2>
+    <div class="btns" style="margin-bottom:10px">
+      <button id="b-go" class="wide">Go</button>
+      <button id="b-pause" class="wide">Pause</button>
+    </div>
+    <div class="btns">
+      <button id="b-scatter" class="wide">Scatter</button>
+      <button id="b-hash" class="wide">Spatial hash: —</button>
+    </div>
+    <p class="note">Pausing the TV also shows its pairing QR. <b>Scatter</b> restarts
+    the flock from a fresh seed; changing <b>flock size</b> restarts it too — that's
+    how the original toy behaved.</p>
+  </div>
+
+  <div class="card">
+    <h2>Readouts</h2>
+    <div class="stats">
+      <span>fps <b id="o-fps">—</b></span>
+      <span>step <b id="o-ms">—</b> ms</span>
+      <span>checks <b id="o-chk">—</b></span>
+      <span>frame <b id="frame">—</b></span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var PROTO = 1;
+
+// transports: BroadcastChannel for a model in this browser, or a WebSocket
+// room (?room=CODE, relayed by the TV app itself) for the model on the TV
+var transports = [];
+if ('BroadcastChannel' in window){
+  var chan = new BroadcastChannel('boids-lab');
+  chan.onmessage = function(e){ dispatch(e.data); };
+  transports.push(function(m){ chan.postMessage(m); });
+}
+var roomMatch = /[?&]room=([\w-]+)/.exec(location.search);
+if (roomMatch){
+  (function(){
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') +
+              location.host + '/ws/' + roomMatch[1];
+    var ws = null;
+    function openWS(){
+      ws = new WebSocket(url);
+      ws.onmessage = function(e){ try { dispatch(JSON.parse(e.data)); } catch (err) {} };
+      ws.onopen = function(){ send({t:'hello'}); };
+      ws.onclose = function(){ ws = null; setTimeout(openWS, 1500); };
+      ws.onerror = function(){};
+    }
+    transports.push(function(m){
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+    });
+    openWS();
+  })();
+}
+if (!transports.length){
+  document.getElementById('connText').textContent = 'no transport: browser lacks BroadcastChannel and no ?room= given';
+  return;
+}
+var OBSERVE = /[?&]observe\b/.test(location.search);
+if (OBSERVE) document.body.classList.add('obs');
+function send(m){
+  if (OBSERVE && m.t !== 'hello' && m.t !== 'describe') return;
+  m.proto = PROTO; m.from = 'remote';
+  for (var ti = 0; ti < transports.length; ti++) transports[ti](m);
+}
+
+var spec = null, values = null, running = false;
+// the original toy's seven sliders, in its order; cnt restarts (setup), the
+// rest steer live
+var KEYS = ['sep','ali','coh','vis','spd','cnt','fade'];
+var $ = function(id){ return document.getElementById(id); };
+
+function fmt(k, v){
+  var s = spec[k];
+  return s && s.integer ? String(Math.round(v)) : (+v).toFixed(v % 1 ? 2 : 1);
+}
+var cntTimer = null;
+function buildSliders(){
+  var host = $('sliders'); host.innerHTML = '';
+  KEYS.forEach(function(k){
+    var s = spec[k];
+    var row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<div class="lbl"><span>' + s.label + '</span><b id="v-' + k + '"></b></div>' +
+      '<input type="range" id="s-' + k + '" min="' + s.min + '" max="' + s.max +
+      '" step="' + s.step + '" aria-label="' + s.label + '">';
+    host.appendChild(row);
+    var inp = row.querySelector('input');
+    inp.value = values[k];
+    row.querySelector('b').textContent = fmt(k, values[k]);
+    inp.addEventListener('input', function(){
+      var v = parseFloat(this.value);
+      $('v-' + k).textContent = fmt(k, v);
+      if (k === 'cnt'){
+        // flock size is a setup parameter: restart, debounced while dragging
+        if (cntTimer) clearTimeout(cntTimer);
+        cntTimer = setTimeout(function(){
+          cntTimer = null;
+          send({t:'setup', profile:{cnt:v, run:running}});
+        }, 350);
+      } else {
+        values[k] = v;
+        send({t:'set', key:k, value:v});
+      }
+    });
+  });
+}
+
+function buildPresets(presets){
+  var host = $('presets'); host.innerHTML = '';
+  Object.keys(presets).forEach(function(name){
+    var b = document.createElement('button');
+    b.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+    b.addEventListener('click', function(){
+      var profile = {};
+      for (var k in presets[name]) profile[k] = presets[name][k];
+      profile.run = true;                     // presets are demonstrations
+      send({t:'setup', profile:profile});     // missing keys keep current values
+    });
+    host.appendChild(b);
+  });
+}
+
+// ---- reflect model truth into the UI --------------------------------------
+function reflect(k, v){
+  if (values) values[k] = v;
+  var inp = $('s-' + k);
+  if (inp && document.activeElement !== inp) inp.value = v;
+  var lbl = $('v-' + k);
+  if (lbl) lbl.textContent = fmt(k, v);
+  if (k === 'hash'){
+    var b = $('b-hash');
+    b.textContent = 'Spatial hash: ' + (v ? 'on' : 'off');
+    b.classList.toggle('on', !!v);
+  }
+}
+function reflectClock(c){
+  running = c.running;
+  $('b-go').classList.toggle('on', running);
+  $('b-pause').classList.toggle('on', !running);
+  $('frame').textContent = c.frame;
+}
+function reflectAll(msg){
+  spec = msg.spec; values = msg.values;
+  buildSliders();
+  buildPresets(msg.presets);
+  reflect('hash', values.hash);
+  reflectClock(msg.clock);
+  isConnected = true;
+  $('conn').classList.add('ok');
+  $('connText').textContent = 'model v' + msg.version.model + ' · protocol v' + msg.version.proto +
+    (OBSERVE ? ' · observer' : '');
+}
+
+function dispatch(m){
+  if (!m || m.from !== 'model') return;
+  if (m.t === 'describe') reflectAll(m);
+  else if (!spec) return;
+  else if (m.t === 'state') reflect(m.key, m.value);
+  else if (m.t === 'clock') reflectClock(m);
+  else if (m.t === 'setupDone'){
+    values = m.values;
+    KEYS.concat(['hash']).forEach(function(k){ reflect(k, values[k]); });
+    reflectClock(m.clock);
+  }
+  else if (m.t === 'telemetry'){
+    if (m.running) $('frame').textContent = m.frame;
+    $('o-fps').textContent = m.running ? m.fps : '—';
+    $('o-ms').textContent = m.stepMs;
+    $('o-chk').textContent = m.checks >= 1e6 ? (m.checks/1e6).toFixed(1)+'M'
+                          : m.checks >= 1e3 ? (m.checks/1e3).toFixed(0)+'k' : m.checks;
+  }
+  else if (m.t === 'err'){ $('connText').textContent = 'model: ' + m.msg; }
+}
+
+$('b-go').addEventListener('click', function(){ send({t:'do', cmd:'go'}); });
+$('b-pause').addEventListener('click', function(){ send({t:'do', cmd:'pause'}); });
+$('b-scatter').addEventListener('click', function(){
+  send({t:'setup', profile:{seed: 1 + Math.floor(Math.random() * 2147483646), run:running}});
+});
+$('b-hash').addEventListener('click', function(){
+  send({t:'set', key:'hash', value:values && values.hash ? 0 : 1});
+});
+
+// ---- find the model -------------------------------------------------------
+var isConnected = false;
+send({t:'hello'});
+setInterval(function(){ if (!isConnected) send({t:'hello'}); }, 1000);
+})();
+</script>
+</body>
+</html>

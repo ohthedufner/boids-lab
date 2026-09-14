@@ -1,0 +1,12 @@
+// Two Android TV apps, one architecture: a WebView showing the boids model,
+// fed by an embedded Java port of relay.js that serves the app's own assets
+// over the TV's LAN address — so the model's existing QR pairing hands any
+// phone on the network a control page served by the TV itself.
+//
+//   :lab   — Boids Lab TV: the full instrument (model + tablet + remote)
+//   :boids — TV Boids: the same model, controls trimmed to the original toy's
+//
+// Zero runtime dependencies, matching the rest of the repo.
+plugins {
+    id("com.android.application") version "9.3.1" apply false
+}

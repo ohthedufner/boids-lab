@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Boids TV</title>
+<meta name="description" content="The TV wrapper: the model fullscreen in an iframe, plus a D-pad-driven control panel. Just another client of the instrument protocol.">
+<style>
+:root{
+  --bg:#12100E; --panel:rgba(28,25,22,.90); --line:rgba(255,255,255,.13);
+  --fg:#EDE6DA; --dim:#9C9184; --accent:#E08A4C;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)}
+body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--fg)}
+#model{position:fixed;inset:0;width:100%;height:100%;border:0;display:block}
+
+/* the panel: right edge, inside the TV-safe area, QR stays clear bottom-left */
+#panel{
+  position:fixed;top:48px;right:48px;bottom:48px;width:460px;z-index:10;
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;
+  display:flex;flex-direction:column;overflow:hidden;
+  transition:transform .22s ease,opacity .22s ease;
+}
+#panel.hid{transform:translateX(calc(100% + 64px));opacity:0}
+#hd{display:flex;align-items:baseline;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);flex:0 0 auto}
+#hd h1{font-size:22px;margin:0;font-weight:600;letter-spacing:.2px}
+#hd span{font-size:14px;color:var(--dim);margin-left:auto}
+#rows{padding:12px 14px;overflow-y:auto;flex:1 1 auto}
+#ft{padding:12px 20px 14px;border-top:1px solid var(--line);flex:0 0 auto}
+#stats{font-size:15px;color:var(--dim);font-variant-numeric:tabular-nums;margin-bottom:6px}
+#stats b{color:var(--fg);font-weight:500}
+.hint{font-size:13.5px;color:var(--dim);line-height:1.45}
+.hint b{color:var(--fg);font-weight:500}
+
+.row{padding:9px 8px;border-radius:12px;border:2px solid transparent}
+.row.focus{border-color:var(--accent);background:rgba(224,138,76,.08)}
+.lbl{display:flex;justify-content:space-between;font-size:16px;color:var(--dim);margin-bottom:7px}
+.lbl b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.bar{height:8px;border-radius:4px;background:rgba(255,255,255,.14)}
+.bar .fill{height:100%;border-radius:4px;background:var(--accent);width:0%}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.btns button{
+  font:inherit;font-size:16.5px;padding:8px 14px;border-radius:10px;
+  background:rgba(255,255,255,.06);color:var(--fg);border:2px solid var(--line);
+  pointer-events:none;   /* the D-pad is the pointer here */
+}
+.btns button.sel{border-color:var(--accent)}
+.btns button.on{background:var(--accent);border-color:var(--accent);color:#1A1207;font-weight:500}
+</style>
+</head>
+<body>
+
+<iframe id="model" title="Boids model"></iframe>
+
+<div id="panel" class="hid">
+  <div id="hd"><h1 id="title">Boids</h1><span id="sub">waiting for the model…</span></div>
+  <div id="rows"></div>
+  <div id="ft">
+    <div id="stats">—</div>
+    <div class="hint" id="hint">▲▼ rows · ◀▶ adjust · OK press · BACK hides ·
+      <b>pause</b> shows the QR — scan it with a phone to hold the controls</div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var PROTO = 1;
+var $ = function(id){ return document.getElementById(id); };
+
+// ---- who we are ------------------------------------------------------------
+// ?panel=full  — Boids Lab TV: clock + presets + live sliders + scatter
+// ?panel=lite  — TV Boids: the original toy's controls only
+// ?room=CODE, ?pair=page, ?autorun are forwarded into the model's iframe.
+function q(name){
+  var m = new RegExp('[?&]' + name + '(?:=([\\w.-]*))?(?:&|$)').exec(location.search);
+  return m ? (m[1] || '') : null;
+}
+var MODE = q('panel') === 'lite' ? 'lite' : 'full';
+var room = q('room'), pair = q('pair'), autorun = q('autorun') !== null;
+$('title').textContent = MODE === 'lite' ? 'TV Boids' : 'Boids Lab';
+document.title = $('title').textContent;
+
+var src = 'model.html?';
+if (room !== null) src += 'room=' + room + '&';
+if (pair) src += 'pair=' + pair + '&';
+if (autorun) src += 'autorun&';
+$('model').src = src.replace(/[?&]$/, '');
+
+// ---- transport: the model lives in the iframe, one BroadcastChannel away ----
+var chan = new BroadcastChannel('boids-lab');
+chan.onmessage = function(e){ dispatch(e.data); };
+function send(m){ m.proto = PROTO; m.from = 'remote'; chan.postMessage(m); }
+
+var spec = null, values = null, running = false, frameNow = 0;
+
+// ---- the rows ---------------------------------------------------------------
+// A row is either a slider (one key, ◀▶ adjusts) or a button strip (◀▶ moves,
+// OK presses). Built from the model's describe — clients build from spec.
+var rows = [], rowIdx = 0;
+
+function sliderRow(key, opts){
+  return Object.assign({kind:'slider', key:key}, opts || {});
+}
+function buildRows(presets){
+  rows = [];
+  if (MODE === 'full'){
+    rows.push({kind:'buttons', items:[
+      {id:'pause', label:'⏸ Pause', fn:togglePause},
+      {id:'step',  label:'Step ▶', fn:function(){ send(running ? {t:'do',cmd:'pause'} : {t:'do',cmd:'step'}); }},
+      {id:'back',  label:'◀ Back', fn:function(){ send({t:'do',cmd:'back'}); }}
+    ]});
+    rows.push(presetRow(presets));
+    ['sep','ali','coh','vis','spd','fade','rate'].forEach(function(k){ rows.push(sliderRow(k)); });
+    rows.push({kind:'buttons', items:[{id:'scatter', label:'🎲 Scatter (new seed)', fn:scatter}]});
+  } else {
+    rows.push({kind:'buttons', items:[
+      {id:'pause',   label:'⏸ Pause · QR', fn:togglePause},
+      {id:'scatter', label:'🎲 Scatter', fn:scatter},
+      {id:'hash',    label:'Hash', fn:function(){ send({t:'set', key:'hash', value:values && values.hash ? 0 : 1}); }}
+    ]});
+    rows.push(presetRow(presets));
+    ['sep','ali','coh','vis','spd'].forEach(function(k){ rows.push(sliderRow(k)); });
+    rows.push(sliderRow('cnt', {setup:true}));   // flock size restarts, like the toy
+    rows.push(sliderRow('fade'));
+  }
+  render();
+}
+function presetRow(presets){
+  return {kind:'buttons', items: Object.keys(presets).map(function(name){
+    return {id:'p-' + name, label: name.charAt(0).toUpperCase() + name.slice(1),
+      fn:function(){
+        var profile = {};
+        for (var k in presets[name]) profile[k] = presets[name][k];
+        profile.run = true;                      // presets are demonstrations
+        send({t:'setup', profile:profile});      // missing keys keep current values
+      }};
+  })};
+}
+function togglePause(){ send({t:'do', cmd: running ? 'pause' : 'go'}); }
+function scatter(){
+  var p = {seed: 1 + Math.floor(Math.random() * 2147483646), run: running};
+  send({t:'setup', profile:p});
+}
+
+// ---- render + focus ----------------------------------------------------------
+function render(){
+  var host = $('rows'); host.innerHTML = '';
+  rows.forEach(function(r, i){
+    var el = document.createElement('div'); el.className = 'row';
+    if (r.kind === 'slider'){
+      var s = spec[r.key];
+      el.innerHTML = '<div class="lbl"><span>' + s.label + '</span><b></b></div>' +
+                     '<div class="bar"><div class="fill"></div></div>';
+    } else {
+      var strip = document.createElement('div'); strip.className = 'btns';
+      r.items.forEach(function(it){
+        var b = document.createElement('button');
+        b.textContent = it.label; b.id = 'tvb-' + it.id;
+        strip.appendChild(b);
+      });
+      el.appendChild(strip);
+      if (!('col' in r)) r.col = 0;
+    }
+    el.dataset.i = i;
+    host.appendChild(el);
+    r.el = el;
+    if (r.kind === 'slider') paintSlider(r);
+  });
+  paintClock();
+  if (values && 'hash' in values) paintHash();
+  focusRow(Math.min(rowIdx, rows.length - 1));
+}
+function paintSlider(r){
+  var s = spec[r.key];
+  var v = r.pending !== undefined ? r.pending : values[r.key];
+  r.el.querySelector('b').textContent = fmt(r.key, v);
+  r.el.querySelector('.fill').style.width =
+    Math.max(0, Math.min(100, (v - s.min) / (s.max - s.min) * 100)) + '%';
+}
+function fmt(k, v){
+  var s = spec[k];
+  return s && s.integer ? String(Math.round(v)) : (+v).toFixed(v % 1 ? 2 : 1);
+}
+function focusRow(i){
+  rows.forEach(function(r){ r.el.classList.remove('focus'); });
+  rowIdx = Math.max(0, Math.min(rows.length - 1, i));
+  var r = rows[rowIdx];
+  r.el.classList.add('focus');
+  r.el.scrollIntoView({block:'nearest'});
+  paintCols();
+}
+function paintCols(){
+  rows.forEach(function(r, i){
+    if (r.kind !== 'buttons') return;
+    var bs = r.el.querySelectorAll('button');
+    for (var j = 0; j < bs.length; j++)
+      bs[j].classList.toggle('sel', i === rowIdx && j === r.col);
+  });
+}
+
+// ---- D-pad ---------------------------------------------------------------
+// The Android activity forwards remote keys by name into __tv.key(); plain
+// keyboards (desktop testing) arrive through keydown below.
+var visible = false, idleTimer = null;
+function show(){ visible = true; $('panel').classList.remove('hid'); tellBridge(); idle(); }
+function hide(){ visible = false; $('panel').classList.add('hid'); tellBridge();
+  if (idleTimer){ clearTimeout(idleTimer); idleTimer = null; } }
+function tellBridge(){ try { if (window.TVBridge) TVBridge.panelState(visible); } catch(e){} }
+function idle(){
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(hide, 20000);
+}
+
+function key(name){
+  if (name === 'PlayPause'){ togglePause(); return; }   // works with the panel away
+  if (!visible){ if (name !== 'Back') show(); return; }
+  if (name === 'Back' || name === 'Menu'){ hide(); return; }
+  idle();
+  if (!rows.length) return;
+  var r = rows[rowIdx];
+  if (name === 'Up') focusRow(rowIdx - 1);
+  else if (name === 'Down') focusRow(rowIdx + 1);
+  else if (name === 'Left' || name === 'Right'){
+    var dir = name === 'Right' ? 1 : -1;
+    if (r.kind === 'slider') nudge(r, dir);
+    else { r.col = Math.max(0, Math.min(r.items.length - 1, r.col + dir)); paintCols(); }
+  }
+  else if (name === 'Enter' && r.kind === 'buttons') r.items[r.col].fn();
+}
+window.__tv = {key:key};
+
+var KEYMAP = {ArrowUp:'Up', ArrowDown:'Down', ArrowLeft:'Left', ArrowRight:'Right',
+              Enter:'Enter', Escape:'Back', ' ':'PlayPause', m:'Menu'};
+window.addEventListener('keydown', function(e){
+  var n = KEYMAP[e.key];
+  if (n){ e.preventDefault(); key(n); }
+});
+
+// ---- sliders: ~24 clicks across any range, snapped to the spec's step -------
+function nudge(r, dir){
+  var s = spec[r.key];
+  var mult = Math.max(1, Math.round((s.max - s.min) / 24 / s.step));
+  var v = (r.pending !== undefined ? r.pending : values[r.key]) + dir * mult * s.step;
+  v = Math.max(s.min, Math.min(s.max, v));
+  v = parseFloat((Math.round((v - s.min) / s.step) * s.step + s.min).toFixed(4));
+  if (r.setup){
+    // a setup parameter (flock size): restart like the toy did, debounced so a
+    // held key rebuilds the flock once, not fifty times
+    r.pending = v; paintSlider(r);
+    if (r.timer) clearTimeout(r.timer);
+    r.timer = setTimeout(function(){
+      r.timer = null;
+      send({t:'setup', profile:{cnt:r.pending, run:running}});
+    }, 450);
+  } else {
+    values[r.key] = v; paintSlider(r);
+    send({t:'set', key:r.key, value:v});
+  }
+}
+
+// ---- reflect the model's truth ------------------------------------------------
+function paintClock(){
+  var b = $('tvb-pause');
+  if (b) b.textContent = (running ? '⏸ Pause' : '▶ Go') + (MODE === 'lite' ? ' · QR' : '');
+}
+function paintHash(){
+  var b = $('tvb-hash');
+  if (b){ b.textContent = 'Hash: ' + (values.hash ? 'on' : 'off'); b.classList.toggle('on', !!values.hash); }
+}
+function eachSliderRow(key, f){
+  rows.forEach(function(r){ if (r.kind === 'slider' && r.key === key) f(r); });
+}
+function dispatch(m){
+  if (!m || m.from !== 'model') return;
+  if (m.t === 'describe'){
+    spec = m.spec; values = m.values; running = m.clock.running; frameNow = m.clock.frame;
+    buildRows(m.presets);
+    $('sub').textContent = 'model v' + m.version.model + (room ? ' · room ' + room : '');
+    connected = true;
+  }
+  else if (!spec) return;
+  else if (m.t === 'state'){
+    values[m.key] = m.value;
+    eachSliderRow(m.key, function(r){ r.pending = undefined; paintSlider(r); });
+    if (m.key === 'hash') paintHash();
+  }
+  else if (m.t === 'clock'){
+    running = m.running; frameNow = m.frame;
+    paintClock(); stats();
+  }
+  else if (m.t === 'setupDone'){
+    values = m.values; running = m.clock.running; frameNow = m.clock.frame;
+    rows.forEach(function(r){ if (r.kind === 'slider'){ r.pending = undefined; paintSlider(r); } });
+    paintClock(); paintHash(); stats();
+  }
+  else if (m.t === 'telemetry'){
+    frameNow = m.frame; tele = m; stats();
+  }
+}
+var tele = null, connected = false;
+function stats(){
+  var s = 'frame <b>' + frameNow + '</b>';
+  if (tele){
+    s += ' · fps <b>' + (running ? tele.fps : '—') + '</b>';
+    if (MODE === 'full') s += ' · pol <b>' + tele.pol + '</b> · rot <b>' + tele.rot + '</b>';
+  }
+  $('stats').innerHTML = s;
+}
+
+// ---- find the model -----------------------------------------------------------
+send({t:'hello'});
+var connTimer = setInterval(function(){
+  if (connected) clearInterval(connTimer);
+  else send({t:'hello'});
+}, 1000);
+})();
+</script>
+</body>
+</html>

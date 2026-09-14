@@ -29,6 +29,7 @@ The pages are honest about what they're for, so pick per device:
 | Screen | Page | What it becomes |
 |---|---|---|
 | 📺 TV / big display | `model.html` | The flock and nothing else — no control panel, boots paused, waits for a client (`?autorun` for ambient mode) |
+| 📺 Google TV (native) | `tv_app/` | Two installable TV apps: the flock plus an embedded relay, phones pair by QR — no PC needed. See [`tv_app/README.md`](tv_app/README.md) |
 | 🎛️ Tablet | `tablet.html` | The full instrument: sliders with numeric entry, clock, capture, setup, lessons, ensembles |
 | 📱 Phone | `remote.html` | A pocket remote: presets, sliders, clock |
 | 💻 Anything | `index.html` | The self-contained toy — the whole lab in one file |
@@ -52,6 +53,11 @@ No relay handy? Any static server works for a single machine
 (`python -m http.server 8013`), and double-clicking `index.html` works for the
 toy. The hosted site above covers the zero-install case — it just can't cross
 devices, because GitHub Pages won't run the WebSocket relay.
+
+Got a Google TV? `tv_app/` builds two **native TV apps** that carry the relay
+inside them — the TV serves the remote to your phone all by itself, and the
+TV's own remote drives a pop-up panel. See
+[`tv_app/README.md`](tv_app/README.md).
 
 ## Things to try tonight
 
@@ -133,6 +139,7 @@ Colours live in one clearly-marked block near the top of its script
 
     node test/protocol-test.js     # 40 checks: contract, determinism, capture, run files, divergence
     node test/ws-test.js           # 12 checks: real relay, real WebSockets, room isolation
+    node test/tv-relay-test.js     # the TV apps' embedded Java relay passes the same suite (needs a JDK)
     cd test && npm install && node qr-test.js    # QR decode round-trip (skips without jsqr)
 
 See `test/README.md` for what each covers and hard-won notes for future test

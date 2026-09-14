@@ -1,0 +1,42 @@
+plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace "org.boidslab.tv.boids"
+    compileSdk 37
+
+    defaultConfig {
+        applicationId "org.boidslab.tv.boids"
+        minSdk 26
+        targetSdk 37
+        versionCode 1
+        versionName "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += "../shared/src"
+            assets.srcDirs += layout.buildDirectory.dir("webAssets").get().asFile
+        }
+    }
+}
+
+// The HTML is the app. Pull the pages straight from the repo at build time —
+// one source of truth: the model, the TV wrapper, and the lite remote that
+// carries only the original toy's controls.
+def repoRoot = rootProject.projectDir.parentFile
+tasks.register("copyWebAssets", Copy) {
+    from(repoRoot) { include "model.html" }
+    from(new File(rootProject.projectDir, "web")) { include "tv.html", "remote-lite.html" }
+    into layout.buildDirectory.dir("webAssets")
+}
+preBuild.dependsOn "copyWebAssets"
+tasks.matching { it.name.contains("Assets") && it.name != "copyWebAssets" }.configureEach {
+    dependsOn "copyWebAssets"
+}

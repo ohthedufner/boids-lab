@@ -819,10 +819,15 @@ if (roomMatch){
     openWS();
   })();
   var roomEl = document.getElementById('room');
+  // ?pair=<page> retargets pairing at a different client page — the TV apps
+  // point it at the remote they actually ship. Default stays the tablet.
+  var pairMatch = /[?&]pair=([\w.-]+)/.exec(location.search);
+  var pairPage = pairMatch ? pairMatch[1] : 'tablet.html';
   var tabletURL = location.origin +
-    location.pathname.replace(/[^\/]*$/, 'tablet.html') + '?room=' + room;
+    location.pathname.replace(/[^\/]*$/, pairPage) + '?room=' + room;
   roomEl.style.display = 'block';
-  roomEl.textContent = 'room ' + room + ' · tablet: ' + tabletURL;
+  roomEl.textContent = 'room ' + room + ' · ' +
+    (pairPage === 'tablet.html' ? 'tablet' : 'remote') + ': ' + tabletURL;
   qrShown = true;
   drawQR(tabletURL);   // scan to pair; visible whenever the model is paused
   updateQR();

@@ -31,9 +31,11 @@ LAN tablet simultaneously — its echoes keep them agreeing):
 
 Pairing: `model.html?room` (no value) generates a 4-character room code and
 shows the tablet URL — as text and as a **QR code** — in the corner of the
-display whenever the model is paused; `?room=CODE` pins the code. The QR
-encoder is self-contained in the model page (byte mode, ECC L, versions 1–5)
-and is verified by decode round-trip in the test suite.
+display whenever the model is paused; `?room=CODE` pins the code. `?pair=<page>`
+retargets the QR at a different client page (default `tablet.html`) — the TV
+apps (`tv_app/`) point it at the remote they actually ship. The QR encoder is
+self-contained in the model page (byte mode, ECC L, versions 1–5) and is
+verified by decode round-trip in the test suite.
 
 Every message carries an envelope:
 
