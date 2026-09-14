@@ -77,6 +77,12 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 }
 #sprompt.show{opacity:1;animation:spulse 2.8s ease-in-out infinite}
 @keyframes spulse{50%{opacity:.4}}
+/* second row: where the controls live — more text for the flock to fly
+   through, which is the point (the word above is the only thing they avoid) */
+#sprompt b{
+  display:block;font-weight:400;font-size:.72em;letter-spacing:.30em;
+  color:var(--dim);opacity:.75;margin-top:1em;
+}
 
 /* the license dialog */
 #lic{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.62);
@@ -99,7 +105,7 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 <div id="splash">
   <canvas id="scv"></canvas>
   <div id="slogo">boids</div>
-  <div id="sprompt">press any button to begin</div>
+  <div id="sprompt">press any button to begin<b>press again for controls</b></div>
 </div>
 
 <div id="panel" class="hid">

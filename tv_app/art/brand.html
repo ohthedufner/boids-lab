@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>boids brand art</title>
+<!-- Launcher art source for the TV apps, in the splash's visual language.
+     Rendered to PNG with headless Chrome at exact pixel sizes:
+       chrome --headless=new --screenshot=out.png --window-size=640,360 \
+         "file:///.../brand.html?art=wordmark&app=lab"
+     ?art= wordmark | formation | murmuration | icon-three | icon-one | icon-b
+     ?app= lab (warm glow, "lab" tag) | boids (teal glow, "tv" tag)
+     Banners render at 640x360 (2x) and icons at 384x384, then downscale. -->
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#12100E}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#word{
+  position:absolute;font:300 100px/1 "Segoe UI Light","Segoe UI",Roboto,ui-sans-serif,sans-serif;
+  letter-spacing:.07em;color:#F3EBDD;white-space:nowrap;user-select:none;
+}
+#tag{
+  position:absolute;font:400 30px/1 "Segoe UI",Roboto,sans-serif;
+  letter-spacing:.30em;user-select:none;
+}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="word"></div>
+<div id="tag"></div>
+<script>
+(function(){
+"use strict";
+function q(n){ var m = new RegExp('[?&]' + n + '=([\\w-]+)').exec(location.search); return m ? m[1] : null; }
+var ART = q('art') || 'wordmark';
+var APP = q('app') || 'lab';
+
+var W = window.innerWidth, H = window.innerHeight;
+var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+cv.width = W; cv.height = H;
+var word = document.getElementById('word'), tag = document.getElementById('tag');
+
+// warm for Boids Lab, teal for TV Boids — same family, instantly distinct in a row
+var PAL = APP === 'boids'
+  ? {glow:'47,182,168',  tagCol:'#2FB6A8', tagText:'tv',
+     birds:['#2FB6A8','#3D63D8','#8FD8CE','#EFC94C','#F3EBDD']}
+  : {glow:'224,138,76',  tagCol:'#E08A4C', tagText:'lab',
+     birds:['#E08A4C','#EFC94C','#F0B98A','#2FB6A8','#F3EBDD']};
+
+function glowShadow(em){
+  return '0 0 ' + 0.09*em + 'px rgba(237,230,218,.55), 0 0 ' + 0.25*em + 'px rgba(' + PAL.glow + ',.6), ' +
+         '0 0 ' + 0.6*em + 'px rgba(' + PAL.glow + ',.4), 0 0 ' + 1.1*em + 'px rgba(' + PAL.glow + ',.22)';
+}
+
+function tri(x, y, ang, s, col, alpha){
+  var ux = Math.cos(ang), uy = Math.sin(ang);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(x + ux*s*1.5, y + uy*s*1.5);
+  ctx.lineTo(x - ux*s + uy*s*0.64, y - uy*s - ux*s*0.64);
+  ctx.lineTo(x - ux*s - uy*s*0.64, y - uy*s + ux*s*0.64);
+  ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+// a bird with a fading trail curving gently behind it
+function bird(x, y, ang, s, col, trail, curve){
+  var steps = 7;
+  for (var i = steps; i >= 1; i--){
+    var t = i/steps;
+    var a = ang + curve*t;
+    var d = s*2.1*t*trail;
+    tri(x - Math.cos(a)*d, y - Math.sin(a)*d, a, s*(1 - 0.55*t), col, 0.16*(1-t) + 0.04);
+  }
+  ctx.shadowColor = col; ctx.shadowBlur = s*1.4;
+  tri(x, y, ang, s, col, 1);
+  ctx.shadowBlur = 0;
+}
+function vignette(cx, cy, r, a){
+  var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g.addColorStop(0, 'rgba(' + PAL.glow + ',' + a + ')');
+  g.addColorStop(1, 'rgba(' + PAL.glow + ',0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function rnd(seed){ var s = seed; return function(){ s ^= s<<13; s ^= s>>>7; s ^= s<<17; return ((s>>>8)&0xFFFFFF)/0x1000000; }; }
+
+// ---- artboards -------------------------------------------------------------
+if (ART === 'wordmark'){
+  // the splash, distilled: the word in its glow, birds grazing the border
+  word.style.font = word.style.font.replace('100px', Math.round(H*0.42) + 'px');
+  word.style.fontSize = Math.round(H*0.42) + 'px';
+  word.textContent = 'boids';
+  word.style.textShadow = glowShadow(H*0.42);
+  document.body.appendChild(word);
+  var wr0 = word.getBoundingClientRect();
+  word.style.left = Math.round((W - wr0.width)/2) + 'px';
+  word.style.top  = Math.round(H*0.30) + 'px';
+  var wr = word.getBoundingClientRect();
+  tag.textContent = PAL.tagText;
+  tag.style.color = PAL.tagCol;
+  tag.style.fontSize = Math.round(H*0.085) + 'px';
+  tag.style.left = Math.round(wr.right - H*0.30) + 'px';
+  tag.style.top  = Math.round(wr.bottom + H*0.07) + 'px';
+  vignette(W/2, H*0.52, H*0.9, 0.07);
+  // grazing birds: tangential headings, as if veering off the glow
+  bird(W*0.13, H*0.24, -0.5, 9,  PAL.birds[0], 2.0,  0.25);
+  bird(W*0.08, H*0.62,  0.4, 7,  PAL.birds[3], 1.8, -0.2);
+  bird(W*0.24, H*0.82, -0.2, 8,  PAL.birds[1], 2.0,  0.2);
+  bird(W*0.78, H*0.12,  2.6, 7,  PAL.birds[1], 1.8, -0.25);
+  bird(W*0.90, H*0.42,  2.2, 9,  PAL.birds[0], 2.0,  0.2);
+  bird(W*0.82, H*0.80,  2.9, 7,  PAL.birds[4], 1.8, -0.2);
+  bird(W*0.42, H*0.10, -2.9, 6,  PAL.birds[3], 1.6,  0.3);
+}
+else if (ART === 'formation'){
+  // a chevron sweeping up-right, wordmark quiet in the corner
+  vignette(W*0.60, H*0.38, H*0.95, 0.06);
+  var lead = {x: W*0.70, y: H*0.30}, ang = -0.42;
+  bird(lead.x, lead.y, ang, 13, PAL.birds[4], 2.4, 0.1);
+  for (var i = 1; i <= 4; i++){
+    var back = i*38;
+    bird(lead.x - Math.cos(ang)*back - Math.sin(ang)*i*26, lead.y - Math.sin(ang)*back + Math.cos(ang)*i*26,
+         ang + 0.06*i, 12 - i*1.6, PAL.birds[i % 4], 2.2, 0.15);
+    bird(lead.x - Math.cos(ang)*back + Math.sin(ang)*i*30, lead.y - Math.sin(ang)*back - Math.cos(ang)*i*30,
+         ang - 0.05*i, 11.5 - i*1.6, PAL.birds[(i+2) % 4], 2.2, -0.15);
+  }
+  word.textContent = 'boids';
+  word.style.fontSize = Math.round(H*0.155) + 'px';
+  word.style.textShadow = glowShadow(H*0.155);
+  word.style.left = Math.round(W*0.055) + 'px';
+  word.style.top = Math.round(H*0.76) + 'px';
+  tag.textContent = PAL.tagText;
+  tag.style.color = PAL.tagCol;
+  tag.style.fontSize = Math.round(H*0.07) + 'px';
+  document.body.appendChild(word);
+  var wr2 = word.getBoundingClientRect();
+  tag.style.left = Math.round(wr2.right + H*0.06) + 'px';
+  tag.style.top = Math.round(wr2.bottom - H*0.085) + 'px';
+}
+else if (ART === 'murmuration'){
+  // a hundred birds in a flowing band, the word beneath
+  vignette(W*0.5, H*0.36, H, 0.05);
+  var r1 = rnd(88172645);
+  for (var k = 0; k < 120; k++){
+    var t2 = k/120;
+    var bx = W*(0.04 + t2*0.92) + (r1()-0.5)*30;
+    var band = Math.sin(t2*5.2 + 0.8);
+    var by = H*0.36 + band*H*0.15 + (r1()-0.5)*H*0.16*(1-Math.abs(band)*0.5);
+    var ba = -0.35 + Math.cos(t2*5.2 + 0.8)*0.5 + (r1()-0.5)*0.4;
+    var bs = 3 + r1()*3.6;
+    tri(bx, by, ba, bs, PAL.birds[(k + (r1()*3|0)) % 5], 0.5 + r1()*0.5);
+  }
+  word.textContent = 'boids';
+  word.style.fontSize = Math.round(H*0.19) + 'px';
+  word.style.textShadow = glowShadow(H*0.19);
+  document.body.appendChild(word);
+  var wr3 = word.getBoundingClientRect();
+  word.style.left = Math.round((W - wr3.width)/2) + 'px';
+  word.style.top = Math.round(H*0.70) + 'px';
+  var wr3b = word.getBoundingClientRect();
+  tag.textContent = PAL.tagText;
+  tag.style.color = PAL.tagCol;
+  tag.style.fontSize = Math.round(H*0.075) + 'px';
+  tag.style.left = Math.round(wr3b.right + H*0.055) + 'px';
+  tag.style.top = Math.round(wr3b.bottom - H*0.095) + 'px';
+}
+else if (ART === 'icon-three'){
+  // three birds for three rules
+  vignette(W*0.52, H*0.50, W*0.62, 0.16);
+  bird(W*0.60, H*0.36, -0.65, W*0.085, PAL.birds[0], 2.2,  0.12);
+  bird(W*0.33, H*0.55, -0.55, W*0.062, PAL.birds[1], 2.0,  0.18);
+  bird(W*0.55, H*0.74, -0.70, W*0.055, PAL.birds[3], 2.0, -0.15);
+}
+else if (ART === 'icon-one'){
+  // one bird, one long arc of a trail
+  vignette(W*0.55, H*0.45, W*0.60, 0.15);
+  var cx = W*0.58, cy = H*0.42, ang2 = -0.60;
+  var steps = 14;
+  for (var j = steps; j >= 1; j--){
+    var tt = j/steps;
+    var a2 = ang2 + 1.6*tt;
+    var d2 = W*0.115*3.4*tt;
+    tri(cx - Math.cos(a2)*d2, cy - Math.sin(a2)*d2, a2, W*0.115*(1 - 0.6*tt), PAL.birds[0], 0.13*(1-tt) + 0.03);
+  }
+  ctx.shadowColor = PAL.birds[0]; ctx.shadowBlur = W*0.10;
+  tri(cx, cy, ang2, W*0.115, PAL.birds[0], 1);
+  ctx.shadowBlur = 0;
+}
+else if (ART === 'icon-b'){
+  // the letter itself, one bird slicing past
+  word.textContent = 'b';
+  word.style.fontSize = Math.round(H*0.68) + 'px';
+  word.style.textShadow = glowShadow(H*0.68);
+  document.body.appendChild(word);
+  var wr4 = word.getBoundingClientRect();
+  word.style.left = Math.round((W - wr4.width)/2 - W*0.02) + 'px';
+  word.style.top = Math.round((H - wr4.height)/2 - H*0.04) + 'px';
+  vignette(W*0.5, H*0.5, W*0.55, 0.10);
+  bird(W*0.76, H*0.30, -0.55, W*0.048, PAL.birds[0], 2.4, 0.15);
+  bird(W*0.22, H*0.76, -0.45, W*0.036, PAL.birds[3], 2.0, 0.2);
+}
+})();
+</script>
+</body>
+</html>
