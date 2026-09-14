@@ -4,3 +4,6 @@ local.properties
 .idea/
 .kotlin/
 *.iml
+# release signing lives in the private boids-tv-release vault; copy its
+# keystore/ folder here to sign — it must never land in this public repo
+keystore/

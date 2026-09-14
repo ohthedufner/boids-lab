@@ -2,6 +2,15 @@ plugins {
     id("com.android.application")
 }
 
+// Release signing is optional and private: if tv_app/keystore/release.properties
+// exists (copied from the boids-tv-release vault; the folder is gitignored),
+// release builds are signed with it. Absent it, they build unsigned.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file("keystore/release.properties")
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace "org.boidslab.tv.boids"
     compileSdk 37
@@ -17,6 +26,25 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            release {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
     }
 
     sourceSets {
