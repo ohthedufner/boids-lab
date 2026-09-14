@@ -64,8 +64,10 @@ the highlighted Pause button) and a **QR code appears bottom-left** — that's
 the pairing story, same as the rest of this repo. Scan it and your phone is
 holding the controls: the full instrument for Boids Lab, the lite remote for
 TV Boids. Or just browse to `http://<tv-ip>:8014/` from anything on your
-network — the TV serves the remote itself, already paired. The room code is
-minted once per install, so a bookmark keeps working across restarts.
+network — the TV serves the remote itself, already paired (the panel's
+header shows the exact address). The room code is minted once per install,
+so a bookmark keeps working across restarts. The panel's © line opens the
+MIT license.
 
 Phones follow the TV and the TV panel follows phones — the model is the
 single source of truth, so every screen always agrees.

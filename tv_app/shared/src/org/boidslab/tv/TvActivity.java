@@ -71,6 +71,10 @@ public abstract class TvActivity extends Activity {
         setContentView(web);
 
         final int boundPort = port;
+        String v = "";
+        try { v = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+        catch (Exception ignored) {}
+        final String version = v;
         // the TV is usually already on the network; give a fresh boot a few
         // seconds to get an address before falling back to loopback
         new Thread(() -> {
@@ -81,7 +85,8 @@ public abstract class TvActivity extends Activity {
             runOnUiThread(() -> {
                 if (boundPort < 0 || web == null) return;
                 web.loadUrl("http://" + host + ":" + boundPort + "/" + startPage() +
-                            "&room=" + room + "&pair=" + pairPage() + "&autorun");
+                            "&room=" + room + "&pair=" + pairPage() +
+                            "&v=" + version + "&autorun");
             });
         }, "find-lan-ip").start();
     }

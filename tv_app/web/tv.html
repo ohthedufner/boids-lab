@@ -47,6 +47,24 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
 }
 .btns button.sel{border-color:var(--accent)}
 .btns button.on{background:var(--accent);border-color:var(--accent);color:#1A1207;font-weight:500}
+
+/* the copyright line: a quiet row, still reachable with the D-pad */
+.row.copy{padding-top:4px;padding-bottom:4px}
+.row.copy .btns button{font-size:13px;color:var(--dim);background:none;border-color:transparent}
+.row.copy .btns button.sel{border-color:var(--accent);color:var(--fg)}
+
+/* the license dialog */
+#lic{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.62);
+  display:flex;align-items:center;justify-content:center}
+#lic.hid{display:none}
+#licBox{width:680px;max-width:86vw;background:var(--panel);border:1px solid var(--line);
+  border-radius:18px;padding:26px 30px 22px}
+#licBox h2{font-size:21px;margin:0 0 4px;font-weight:600}
+#licBox .cr{font-size:16px;color:var(--fg);margin:0 0 12px}
+#licBox p{font-size:14px;line-height:1.5;color:var(--dim);margin:0 0 10px}
+#licOk{display:block;margin:16px auto 0;font:inherit;font-size:17px;padding:9px 46px;
+  border-radius:10px;background:var(--accent);border:2px solid var(--accent);
+  color:#1A1207;font-weight:500;cursor:pointer}
 </style>
 </head>
 <body>
@@ -60,6 +78,29 @@ body{font:19px/1.4 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial
     <div id="stats">—</div>
     <div class="hint" id="hint">▲▼ rows · ◀▶ adjust · OK press · BACK hides ·
       <b>pause</b> shows the QR — scan it with a phone to hold the controls</div>
+  </div>
+</div>
+
+<div id="lic" class="hid">
+  <div id="licBox">
+    <h2>MIT License</h2>
+    <p class="cr">Copyright © 2026 Eric Johnson</p>
+    <p>Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the “Software”), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:</p>
+    <p>The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.</p>
+    <p>THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.</p>
+    <button id="licOk">OK</button>
   </div>
 </div>
 
@@ -80,6 +121,7 @@ function q(name){
 }
 var MODE = q('panel') === 'lite' ? 'lite' : 'full';
 var room = q('room'), pair = q('pair'), autorun = q('autorun') !== null;
+var APPV = q('v');   // the activity passes its APK version
 $('title').textContent = MODE === 'lite' ? 'TV Boids' : 'Boids Lab';
 document.title = $('title').textContent;
 
@@ -88,6 +130,18 @@ if (room !== null) src += 'room=' + room + '&';
 if (pair) src += 'pair=' + pair + '&';
 if (autorun) src += 'autorun&';
 $('model').src = src.replace(/[?&]$/, '');
+
+// the TV wrapper owns the TV's presentation: the model's own corner text
+// (room/URL, pause status) is the panel's job here, so quiet it. The QR
+// stays — that's still the pairing story.
+$('model').addEventListener('load', function(){
+  try {
+    var d = this.contentDocument;
+    var st = d.createElement('style');
+    st.textContent = '#room,#status{display:none!important}';
+    d.head.appendChild(st);
+  } catch(e){}
+});
 
 // ---- transport: the model lives in the iframe, one BroadcastChannel away ----
 var chan = new BroadcastChannel('boids-lab');
@@ -126,6 +180,9 @@ function buildRows(presets){
     rows.push(sliderRow('cnt', {setup:true}));   // flock size restarts, like the toy
     rows.push(sliderRow('fade'));
   }
+  rows.push({kind:'buttons', cls:'copy', items:[
+    {id:'lic', label:'© 2026 Eric Johnson · MIT License', fn:openLic}
+  ]});
   render();
 }
 function presetRow(presets){
@@ -149,7 +206,7 @@ function scatter(){
 function render(){
   var host = $('rows'); host.innerHTML = '';
   rows.forEach(function(r, i){
-    var el = document.createElement('div'); el.className = 'row';
+    var el = document.createElement('div'); el.className = 'row' + (r.cls ? ' ' + r.cls : '');
     if (r.kind === 'slider'){
       var s = spec[r.key];
       el.innerHTML = '<div class="lbl"><span>' + s.label + '</span><b></b></div>' +
@@ -206,15 +263,23 @@ function paintCols(){
 // keyboards (desktop testing) arrive through keydown below.
 var visible = false, idleTimer = null;
 function show(){ visible = true; $('panel').classList.remove('hid'); tellBridge(); idle(); }
-function hide(){ visible = false; $('panel').classList.add('hid'); tellBridge();
+function hide(){
+  if (licOpen) return;   // never hide the panel out from under the license dialog
+  visible = false; $('panel').classList.add('hid'); tellBridge();
   if (idleTimer){ clearTimeout(idleTimer); idleTimer = null; } }
-function tellBridge(){ try { if (window.TVBridge) TVBridge.panelState(visible); } catch(e){} }
+function tellBridge(){ try { if (window.TVBridge) TVBridge.panelState(visible || licOpen); } catch(e){} }
 function idle(){
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(hide, 20000);
 }
 
+var licOpen = false;
+function openLic(){ licOpen = true; $('lic').classList.remove('hid'); tellBridge(); }
+function closeLic(){ licOpen = false; $('lic').classList.add('hid'); tellBridge(); idle(); }
+$('licOk').addEventListener('click', closeLic);
+
 function key(name){
+  if (licOpen){ if (name === 'Enter' || name === 'Back' || name === 'Menu') closeLic(); return; }
   if (name === 'PlayPause'){ togglePause(); return; }   // works with the panel away
   if (!visible){ if (name !== 'Back') show(); return; }
   if (name === 'Back' || name === 'Menu'){ hide(); return; }
@@ -278,7 +343,8 @@ function dispatch(m){
   if (m.t === 'describe'){
     spec = m.spec; values = m.values; running = m.clock.running; frameNow = m.clock.frame;
     buildRows(m.presets);
-    $('sub').textContent = 'model v' + m.version.model + (room ? ' · room ' + room : '');
+    $('sub').textContent = (APPV ? 'v' + APPV : 'model v' + m.version.model) +
+                           ' · ' + location.host;
     connected = true;
   }
   else if (!spec) return;
