@@ -214,9 +214,9 @@ var splashActive = false, splashKey = null;
   var born = performance.now(), ready = false, readyAt = 0, raf = 0;
   function ease(x){ x = Math.max(0, Math.min(1, x)); return 1 - Math.pow(1 - x, 3); }
 
-  function step(rx0, ry0, rx1, ry1, g){
+  function step(rx0, ry0, rx1, ry1, g, reach){
     var vis = 54, vis2 = vis * vis, sr = vis * 0.42, sep2 = sr * sr;
-    var hw = W * 0.5, hh = H * 0.5, reach = Math.max(W, H) * 0.09;
+    var hw = W * 0.5, hh = H * 0.5;
     for (var i = 0; i < N; i++){
       var bx = px[i], by = py[i];
       var ax = 0, ay = 0, cxs = 0, cys = 0, sx = 0, sy = 0, n = 0;
@@ -281,8 +281,12 @@ var splashActive = false, splashKey = null;
     logo.style.transform = 'translate(-50%,-58%) scale(' + (0.08 + 0.92 * g) + ')';
     if (!ready && g >= 1 && t - born > 3900){ ready = true; readyAt = t; prompt.classList.add('show'); }
     if (ready && t - readyAt > 45000) return begin();
-    var r = logo.getBoundingClientRect(), pad = 10;
-    step(r.left - pad, r.top - pad, r.right + pad, r.bottom + pad, g);
+    // The border hugs the glow and scales with the word — deliberately tight,
+    // so birds graze the light and fly straight through the prompt text below.
+    // The pass-through is the point: it makes the word's avoidance unmistakable.
+    var r = logo.getBoundingClientRect(), pad = 6;
+    var reach = Math.max(22, r.height * 0.38);
+    step(r.left - pad, r.top - pad, r.right + pad, r.bottom + pad, g, reach);
     draw();
     raf = requestAnimationFrame(frame);
   }
